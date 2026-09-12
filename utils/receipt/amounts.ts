@@ -27,7 +27,7 @@ export const parseAmountToken = (raw: string): number | null => {
 };
 
 const AMOUNT_PATTERN =
-  /(?:GH₵|GHC|GHS|SGD|USD|GBP|EUR|[$£€₵])\s*\d[\d.,]*|\b\d{1,3}(?:,\d{3})+(?:\.\d{1,4})?\b|\b\d+,\d{2}\b|\b\d+\.\d{1,4}\b/gi;
+  /(?:GH₵|GHC|GHS|SGD|USD|GBP|EUR|[$£€₵])\s*\d[\d.,]*|\b\d{1,3}(?:,\d{3})+(?:\.\d{1,4})?\b|\b\d+,\d{2}\b|\b\d+\.\d{1,4}\b|[A-Za-z](\d+\.\d{1,4})\b/gi;
 
 const isNegativeMatch = (line: string, index: number): boolean => {
   const before = line.slice(Math.max(0, index - 2), index);
@@ -40,7 +40,9 @@ export const extractAmounts = (line: string): number[] => {
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(line)) !== null) {
     if (isNegativeMatch(line, match.index)) continue;
-    matches.push(match[0]);
+    const after = line.slice(match.index + match[0].length, match.index + match[0].length + 3);
+    if (/^\s*%/.test(after)) continue;
+    matches.push(match[1] ?? match[0]);
   }
   return matches.map(parseAmountToken).filter((n): n is number => n !== null);
 };

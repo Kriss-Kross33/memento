@@ -23,9 +23,12 @@ export const OCR_WORD_FIXES: [RegExp, string][] = [
   [/\bhgmt\b/gi, 'MGMT'],
   [/\bpie\s+lid\b/gi, 'PTE LTD'],
   [/\bcrieck\b/gi, 'Check'],
+  [/\bwnlmar\s*t\b/gi, 'Walmart'],
+  [/\bthank\s+youl\b/gi, 'Thank you'],
+  [/walmart\s*>/gi, 'Walmart'],
 ];
 
-export const TOTAL_TERMS = ['total', 'grand total', 'amount due', 'amount paid', 'total due'];
+export const TOTAL_TERMS = ['total', 'grand total', 'amount due', 'amount paid', 'total due', 'total purchase'];
 export const SUBTOTAL_TERMS = ['subtotal', 'sub total', 'sub-total'];
 export const TAX_TERMS = ['tax', 'vat', 'gst', 'nhil', 'levy', 'getfund'];
 export const PAYMENT_TERMS = ['payment', 'cash', 'card', 'visa', 'mastercard', 'momo', 'tendered'];
@@ -36,6 +39,7 @@ export const HEADER_NOISE_TERMS = [
   'store',
   'order',
   'check',
+  'chk',
   'cashier',
   'counter',
   'print',
@@ -44,6 +48,9 @@ export const HEADER_NOISE_TERMS = [
   'http',
   'phone',
   'customer copy',
+  'thank you',
+  'feedback',
+  'survey',
 ];
 
 const normalize = (value: string): string =>
@@ -75,15 +82,27 @@ export const similarity = (a: string, b: string): number => {
   return 1 - levenshtein(na, nb) / max;
 };
 
+const tokenIsTerm = (tokens: string[], term: string, index: number): boolean => {
+  if (tokens[index] !== term) return false;
+  // "sub total" should not count as the standalone term "total".
+  if (term === 'total' && tokens[index - 1] === 'sub') return false;
+  return true;
+};
+
 export const fuzzyHasTerm = (text: string, terms: string[], threshold = 0.76): boolean => {
   const value = normalize(text);
   if (!value) return false;
-  const tokens = value.split(' ');
+  const tokens = value.split(' ').filter(Boolean);
   for (const term of terms) {
-    if (value.includes(term)) return true;
-    const score = similarity(value, term);
-    if (score >= threshold) return true;
-    if (tokens.some((token) => similarity(token, term) >= threshold)) return true;
+    const termNorm = normalize(term);
+    const termTokens = termNorm.split(' ');
+    if (termTokens.length > 1) {
+      if (value.includes(termNorm)) return true;
+    } else if (tokens.some((_, index) => tokenIsTerm(tokens, termNorm, index))) {
+      return true;
+    }
+    if (similarity(value, termNorm) >= threshold) return true;
+    if (tokens.some((token) => token !== 'subtotal' && similarity(token, termNorm) >= threshold)) return true;
   }
   return false;
 };

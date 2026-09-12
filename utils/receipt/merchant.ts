@@ -2,10 +2,11 @@ import type { LayoutDocument } from '@/utils/receipt/types';
 import { extractAmounts } from '@/utils/receipt/amounts';
 import { fuzzyHasTerm, HEADER_NOISE_TERMS } from '@/utils/receipt/vocabulary';
 
-const KNOWN_MERCHANTS: { name: string; category: string }[] = [
+const KNOWN_MERCHANTS: { name: string; category: string; pattern?: RegExp }[] = [
   { name: 'Electricity Company of Ghana', category: 'Utilities' },
   { name: 'Ghana Water Company', category: 'Utilities' },
   { name: 'KFC Chinatown Point', category: 'Food & Dining' },
+  { name: 'Walmart', category: 'Groceries', pattern: /\bwalmart\b/i },
 ];
 
 const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -43,6 +44,9 @@ const isValidMerchantLine = (text: string): boolean => {
   if (value.length < 3 || value.length > 56) return false;
   if (!/[a-zA-Z]/.test(value)) return false;
   if (fuzzyHasTerm(value, HEADER_NOISE_TERMS, 0.84)) return false;
+  if (/thank|feedback|survey|\.com|\.cm\b|mgr:|^\d{3}-\d{3}|pike|gallatin|\bst#/i.test(value)) {
+    return false;
+  }
   if (/^(store|gst|co\.?\s*reg|check|receipt|invoice|cash)/i.test(value)) return false;
   if (/\b(pte\.?\s*ltd|llc|inc\.?)\b/i.test(value)) return false;
   const amounts = extractAmounts(value);
@@ -54,8 +58,23 @@ export const pickMerchantCandidate = (layout: LayoutDocument) => {
   const candidates = (top.length > 0 ? top : layout.lines.slice(0, 8)).filter((line) =>
     isValidMerchantLine(line.text)
   );
+  const haystack = layout.lines.map((line) => line.text).join('\n');
+  for (const merchant of KNOWN_MERCHANTS) {
+    if (merchant.pattern?.test(haystack) || similarity(haystack, merchant.name) >= 0.86) {
+      const source =
+        layout.lines.find((line) => new RegExp(`^${merchant.name}\\b`, 'i').test(line.text.trim())) ??
+        layout.lines.find((line) => merchant.pattern?.test(line.text) || similarity(line.text, merchant.name) >= 0.68);
+      return {
+        value: merchant.name,
+        confidence: 0.94,
+        categoryHint: merchant.category,
+        source: source?.text ?? merchant.name,
+      };
+    }
+  }
+
   if (candidates.length === 0) return { value: '', confidence: 0.2, categoryHint: undefined, source: 'none' };
-  const branded = candidates.find((line) => /^kfc\b/i.test(line.text.trim()));
+  const branded = candidates.find((line) => /^(kfc|walmart)\b/i.test(line.text.trim()));
   const chosen = branded ?? candidates[0];
 
   let matchedCategory: string | undefined;

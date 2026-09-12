@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T08:13:02.981Z",
+  "generatedAt": "2026-09-12T08:49:15.862Z",
   "receipts": [
     {
       "id": "kfc-chinatown",
@@ -10,6 +10,11 @@
       "id": "kfc-grenada",
       "dump": "ocr-dumps/kfc-grenada.json",
       "expected": "expected/kfc-grenada.json"
+    },
+    {
+      "id": "walmart-gallatin",
+      "dump": "ocr-dumps/walmart-gallatin.json",
+      "expected": "expected/walmart-gallatin.json"
     }
   ]
 }

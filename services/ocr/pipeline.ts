@@ -72,7 +72,7 @@ export async function readReceipt(
     if (prepared !== uri) {
       retryUri = uri;
       retryLabel = 'retry:original';
-    } else if (quality.minSide > 0 && quality.minSide < 1600) {
+    } else if (quality.minSide > 0 && quality.minSide < 800) {
       const upscaled = await applyPreprocessPlan(uri, forcedUpscale(quality));
       if (upscaled !== uri) {
         retryUri = upscaled;

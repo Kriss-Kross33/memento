@@ -11,7 +11,11 @@ export const pickCurrencyCandidate = (layout: LayoutDocument, merchant: string, 
   }
   if (/€|\bEUR\b|\beuro/i.test(text)) return { value: 'EUR' as Currency, confidence: 0.88, source: 'eur-marker' };
   if (/£|\bGBP\b|\bpound/i.test(text)) return { value: 'GBP' as Currency, confidence: 0.88, source: 'gbp-marker' };
-  if (/\$|\bUSD\b|\bdollar/i.test(text)) return { value: 'USD' as Currency, confidence: 0.82, source: 'usd-marker' };
+  if (
+    /\$|\bUSD\b|\bdollar|\bus\s*debit\b|\bwalmart\b|\bnashville\b|gallatin\s+tn\b/i.test(text)
+  ) {
+    return { value: 'USD' as Currency, confidence: 0.86, source: 'usd-marker' };
+  }
   return { value: fallback, confidence: 0.6, source: 'fallback' };
 };
 
@@ -20,6 +24,7 @@ export const guessCategoryCandidate = (text: string, merchant: string, categoryH
   const haystack = `${merchant} ${text}`;
   const hints: Array<{ value: string; pattern: RegExp }> = [
     { value: 'Food & Dining', pattern: /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|food|dining|bar|grill|kitchen)\b/i },
+    { value: 'Groceries', pattern: /\b(walmart|grocery|supermarket|kroger|tesco)\b/i },
     { value: 'Transportation', pattern: /\b(uber|bolt|taxi|fuel|petrol|diesel|shell|goil|station)\b/i },
     { value: 'Travel', pattern: /\b(airline|airways|hotel|booking|flight)\b/i },
     { value: 'Utilities', pattern: /\b(electric|water|ecg|internet|wifi|airtime|mtn|telecel|airteltigo)\b/i },

@@ -14,7 +14,11 @@ export const findAnchors = (layout: LayoutDocument): Anchor[] => {
   for (const line of layout.lines) {
     const text = line.text;
     if (fuzzyHasTerm(text, SUBTOTAL_TERMS, 0.8)) anchors.push({ role: 'subtotal', lineIndex: line.index, confidence: 0.9 });
-    if (fuzzyHasTerm(text, TOTAL_TERMS, 0.82) && !/total\s*item\s*sold/i.test(text)) {
+    if (
+      fuzzyHasTerm(text, TOTAL_TERMS, 0.82) &&
+      !fuzzyHasTerm(text, SUBTOTAL_TERMS, 0.8) &&
+      !/total\s*item\s*sold/i.test(text)
+    ) {
       anchors.push({ role: 'total', lineIndex: line.index, confidence: 0.94 });
     }
     if (fuzzyHasTerm(text, TAX_TERMS, 0.8)) anchors.push({ role: 'tax', lineIndex: line.index, confidence: 0.85 });
@@ -26,13 +30,16 @@ export const findAnchors = (layout: LayoutDocument): Anchor[] => {
 };
 
 export const deriveRegions = (layout: LayoutDocument, anchors: Anchor[]) => {
-  const totalY = anchors.find((a) => a.role === 'total')?.lineIndex ?? Infinity;
-  const subtotalY = anchors.find((a) => a.role === 'subtotal')?.lineIndex ?? totalY;
-  const paymentY = anchors.find((a) => a.role === 'payment')?.lineIndex ?? totalY + 2;
+  const totalAnchors = anchors.filter((a) => a.role === 'total');
+  const firstTotal = totalAnchors[0]?.lineIndex ?? Infinity;
+  const lastTotal = totalAnchors[totalAnchors.length - 1]?.lineIndex ?? firstTotal;
+  const subtotalY = anchors.find((a) => a.role === 'subtotal')?.lineIndex ?? firstTotal;
+  const paymentY = anchors.find((a) => a.role === 'payment')?.lineIndex ?? lastTotal + 2;
+  const changeY = anchors.find((a) => a.role === 'change')?.lineIndex ?? lastTotal;
 
-  const itemRegionMax = Number.isFinite(totalY) ? totalY : Math.floor(layout.lines.length * 0.72);
-  const totalsMin = Math.min(subtotalY, totalY);
-  const totalsMax = Math.max(totalY, paymentY);
+  const itemRegionMax = Number.isFinite(firstTotal) ? firstTotal : Math.floor(layout.lines.length * 0.72);
+  const totalsMin = Math.min(subtotalY, firstTotal);
+  const totalsMax = Math.max(lastTotal, paymentY, changeY);
 
   return {
     itemMaxLineIndex: itemRegionMax,

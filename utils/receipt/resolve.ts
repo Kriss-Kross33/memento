@@ -16,6 +16,7 @@ const pickTotal = (
   );
   if (amounts.length === 0) return { value: 0, confidence: 0.2, source: 'none' };
   const scored = amounts
+    .filter((candidate) => !/%/.test(candidate.text) || candidate.roleScores.total >= 0.8)
     .map((candidate) => ({
       ...candidate,
       score:
@@ -25,11 +26,14 @@ const pickTotal = (
         candidate.roleScores.tax * 0.55 -
         candidate.roleScores.cash * 0.25,
     }))
-    .sort((a, b) => b.score - a.score || b.lineIndex - a.lineIndex);
+    .sort((a, b) => b.score - a.score || b.value - a.value || b.lineIndex - a.lineIndex);
+  const labeled = scored.filter((candidate) => candidate.roleScores.total >= 0.8);
+  const chosen = labeled[0] ?? scored[0];
+  if (!chosen) return { value: 0, confidence: 0.2, source: 'none' };
   return {
-    value: scored[0].value,
-    confidence: Math.min(0.99, Math.max(0.2, scored[0].score)),
-    source: scored[0].text,
+    value: chosen.value,
+    confidence: Math.min(0.99, Math.max(0.2, chosen.score)),
+    source: chosen.text,
   };
 };
 
@@ -45,6 +49,8 @@ const parseReceiptNumber = (text: string, lines: string[]): { value?: string; co
   if (labeled?.[1]) return { value: labeled[1], confidence: 0.8, source: labeled[0] };
   const check = text.match(/\b(?:chk|check|chek|chck|crieck|criek)\s*[#:]+\s*(\d{3,8})\b/i);
   if (check?.[1]) return { value: check[1], confidence: 0.78, source: check[0] };
+  const terminal = text.match(/\bTR#\s*(\d{3,8})\b/i);
+  if (terminal?.[1]) return { value: terminal[1], confidence: 0.74, source: terminal[0] };
   const orderIdx = lines.findIndex((line) => /^order\s*#?\s*$/i.test(line));
   const orderNext = orderIdx >= 0 ? lines[orderIdx + 1]?.trim() : '';
   if (/^\d{3,8}$/.test(orderNext)) return { value: orderNext, confidence: 0.68, source: orderNext };

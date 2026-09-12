@@ -19,10 +19,18 @@ type PriceCandidate = {
   x: number;
 };
 
+const BARCODE = /\b\d{8,14}[A-Z]{0,2}\b/g;
+const PRICE_LINE = /^\s*(?:[$£€₵])?\s*\d+[.,]\d{2}\s*[ONXTFE0]?\s*$/i;
+const QTY_NOTE = /^\d+\s*(?:AT|FOR|lb|1b)\b/i;
+const JUNK_LABEL = /^(at|for|lb|1b|f|kf|n|o|x|t)$/i;
+
 const cleanLabel = (value: string): string =>
   value
     .replace(/(?:GH₵|GHC|GHS|SGD|USD|GBP|EUR|[$£€₵])\s*\d[\d.,]*/gi, '')
+    .replace(BARCODE, '')
+    .replace(/[A-Z]?\d+[.,]\d{2}(?:\s*[ONXTFE0])?\s*$/i, '')
     .replace(/\b\d+[.,]\d{2}\b/g, '')
+    .replace(/\b[ONXTFE]\s*$/i, '')
     .replace(/@\s*$/g, '')
     .replace(/^[^a-zA-Z0-9]+/, '')
     .replace(/\s+/g, ' ')
@@ -57,17 +65,22 @@ const isServiceOrNoise = (text: string): boolean =>
   fuzzyHasTerm(text, CHANGE_TERMS, 0.82) ||
   fuzzyHasTerm(text, HEADER_NOISE_TERMS, 0.82) ||
   /\b(pte\.?\s*ltd|llc|inc\.?|reg\.?\s*no)\b/i.test(text) ||
-  /^free\b/i.test(text);
+  /^free\b/i.test(text) ||
+  QTY_NOTE.test(text) ||
+  /^0{3,}\d+[A-Z]{0,2}$/i.test(text) ||
+  /^\d{8,}[A-Z]{0,2}$/i.test(text);
 
 const pairScore = (item: ItemCandidate, price: PriceCandidate, docWidth: number): number => {
-  const dy = Math.abs(item.y - price.y);
-  if (dy > 72) return 0;
-  const verticalScore = Math.max(0, 1 - dy / 72);
+  const dy = price.y - item.y;
+  // Walmart-style columns put the price on the same row or just below the label.
+  if (dy < -12 || dy > 115) return 0;
+  const verticalScore = Math.max(0, 1 - Math.abs(dy) / 115);
   const dx = Math.max(0, price.x - item.x);
   const horizontalScore = Math.min(1, dx / Math.max(docWidth * 0.4, 1));
   const rightBias = Math.min(1, price.x / Math.max(docWidth, 1));
   const qtyScore = item.unitAt ? Math.max(0, 1 - Math.abs(item.unitAt * item.quantity - price.amount) / Math.max(price.amount, 1)) : 0.4;
-  return verticalScore * 0.35 + horizontalScore * 0.2 + rightBias * 0.15 + qtyScore * 0.3;
+  const belowBonus = dy >= -8 ? 0.08 : 0;
+  return verticalScore * 0.35 + horizontalScore * 0.2 + rightBias * 0.15 + qtyScore * 0.3 + belowBonus;
 };
 
 export const parseItems = (
@@ -79,18 +92,51 @@ export const parseItems = (
   const itemCandidates: ItemCandidate[] = [];
   const prices: PriceCandidate[] = [];
 
-  for (const line of region) {
+  for (const [position, line] of region.entries()) {
     const amounts = extractAmounts(line.text);
-    const amountOnly = amounts.length === 1 && line.text.replace(/[0-9.,\s$£€₵GHCSUSDPEAR]/gi, '').trim().length === 0;
-    if (amountOnly) {
+    const amountOnly =
+      amounts.length === 1 &&
+      (PRICE_LINE.test(line.text) ||
+        line.text.replace(/[0-9.,\s$£€₵GHCSUSDPEARONXTF]/gi, '').trim().length === 0);
+    const prev = region[position - 1];
+    const tenderContext = [line.text, prev?.text ?? ''].join(' ');
+    const isTenderPrice =
+      fuzzyHasTerm(tenderContext, PAYMENT_TERMS, 0.8) ||
+      fuzzyHasTerm(tenderContext, CHANGE_TERMS, 0.8) ||
+      fuzzyHasTerm(tenderContext, TOTAL_TERMS, 0.82) ||
+      fuzzyHasTerm(tenderContext, SUBTOTAL_TERMS, 0.82) ||
+      fuzzyHasTerm(tenderContext, TAX_TERMS, 0.8);
+    const rightPrice = amountOnly && line.rightColumnScore >= 0.4 && !isTenderPrice;
+    if (rightPrice) {
       prices.push({ lineIndex: line.index, amount: amounts[0], y: line.centerY, x: line.box.x });
       continue;
     }
+    if (amounts.length === 1 && /[ONXTF]\s*$/i.test(line.text) && line.rightColumnScore >= 0.35) {
+      prices.push({ lineIndex: line.index, amount: amounts[0], y: line.centerY, x: line.box.x });
+      continue;
+    }
+    if (
+      amounts.length >= 1 &&
+      /[A-Za-z]{2,}/.test(line.text) &&
+      /\d+[.,]\d{2}\s*[ONXTFE0]?\s*$/i.test(line.text) &&
+      !QTY_NOTE.test(line.text) &&
+      !/@\s*[\d.,]+/.test(line.text) &&
+      !/\b(?:lb|1b)\b/i.test(line.text) &&
+      !/\d+\s*\/\s*\d+[.,]\d{2}/.test(line.text)
+    ) {
+      prices.push({
+        lineIndex: line.index,
+        amount: amounts[amounts.length - 1],
+        y: line.centerY,
+        x: line.box.x + line.box.width,
+      });
+    }
     if (!/[a-zA-Z]{2,}/.test(line.text)) continue;
     if (isServiceOrNoise(line.text)) continue;
-    if (line.normalizedY < 0.22) continue;
+    if (line.normalizedY < 0.18) continue;
     const parsed = parseQtyAndLabel(line.text);
     if (!parsed.label || parsed.label.length < 2 || parsed.label.length > 56) continue;
+    if (JUNK_LABEL.test(parsed.label)) continue;
     if (parsed.quantity > 30 && parsed.unitAt == null) continue;
     itemCandidates.push({
       lineIndex: line.index,
@@ -105,7 +151,7 @@ export const parseItems = (
   const edges = itemCandidates.flatMap((item) =>
     prices.map((price) => ({ item, price, score: pairScore(item, price, layout.width) }))
   )
-  .filter((pair) => pair.score >= 0.5)
+  .filter((pair) => pair.score >= 0.42)
   .sort((a, b) => b.score - a.score);
 
   const usedItem = new Set<number>();
@@ -133,6 +179,29 @@ export const parseItems = (
     });
     scoreSum += edge.score;
   }
+
+  for (const item of resolved) {
+    const origin = itemCandidates.find((candidate) => candidate.label === item.label);
+    if (!origin) continue;
+    const note = layout.lines.find(
+      (line) =>
+        line.centerY > origin.y &&
+        line.centerY < origin.y + 95 &&
+        /(\d+)\s*AT\b/i.test(line.text)
+    );
+    const match = note?.text.match(/(\d+)\s*AT\b/i);
+    if (!match) continue;
+    const quantity = Number(match[1]) || item.quantity;
+    if (quantity < 2 || quantity > 30) continue;
+    item.quantity = quantity;
+    item.unitPrice = Math.round(((item.total ?? item.unitPrice) / quantity) * 100) / 100;
+  }
+
+  resolved.sort((a, b) => {
+    const ay = itemCandidates.find((candidate) => candidate.label === a.label)?.y ?? 0;
+    const by = itemCandidates.find((candidate) => candidate.label === b.label)?.y ?? 0;
+    return ay - by;
+  });
 
   // Fallback for lone item matching total (common one-line receipts).
   if (resolved.length === 0 && itemCandidates.length > 0 && total > 0) {

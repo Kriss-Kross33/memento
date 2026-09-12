@@ -1,0 +1,29 @@
+{
+  "id": "walmart-gallatin",
+  "merchant": "Walmart",
+  "date": "2026-09-12",
+  "amount": 290.87,
+  "currency": "USD",
+  "items": [
+    { "label": "BQ CHKNN FR", "quantity": 12, "unitPrice": 1.24, "total": 14.88 },
+    { "label": "RNCH QS0 FR", "quantity": 1, "unitPrice": 6.64, "total": 6.64 },
+    { "label": "OM SMKD HAM", "quantity": 1, "unitPrice": 3.43, "total": 3.43 },
+    { "label": "CARNE PICADA", "quantity": 1, "unitPrice": 12.22, "total": 12.22 },
+    { "label": "MILANESA", "quantity": 1, "unitPrice": 14.48, "total": 14.48 },
+    { "label": "BNLS CHOPS", "quantity": 1, "unitPrice": 7.9, "total": 7.9 },
+    { "label": "PREMIUM", "quantity": 1, "unitPrice": 3.58, "total": 3.58 },
+    { "label": "BNLS CK BRST", "quantity": 1, "unitPrice": 12.95, "total": 12.95 },
+    { "label": "HST CHOCO CU", "quantity": 1, "unitPrice": 3.48, "total": 3.48 },
+    { "label": "STRAW", "quantity": 1, "unitPrice": 1.98, "total": 1.98 },
+    { "label": "POTATOES", "quantity": 1, "unitPrice": 4.24, "total": 4.24 },
+    { "label": "MAND 3 BAG", "quantity": 1, "unitPrice": 3.97, "total": 3.97 },
+    { "label": "FNBL STRW 22", "quantity": 1, "unitPrice": 4.78, "total": 4.78 },
+    { "label": "BEVERAGE", "quantity": 1, "unitPrice": 5.88, "total": 5.88 },
+    { "label": "LIME BULK", "quantity": 6, "unitPrice": 0.32, "total": 1.9 },
+    { "label": "PEACHES", "quantity": 1, "unitPrice": 3.88, "total": 3.88 },
+    { "label": "NECTARINES", "quantity": 1, "unitPrice": 3.71, "total": 3.71 },
+    { "label": "AVOCADO", "quantity": 3, "unitPrice": 0.77, "total": 2.31 },
+    { "label": "SITE MERCH", "quantity": 1, "unitPrice": 158.2, "total": 158.2 },
+    { "label": "BREAD", "quantity": 1, "unitPrice": 1.96, "total": 1.96 }
+  ]
+}
