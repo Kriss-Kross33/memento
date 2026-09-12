@@ -19,8 +19,8 @@ import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
 import Button from '@/components/Button';
 import { toISODate } from '@/components/DatePickerField';
-import { recognizeReceiptImage } from '@/services/ocr';
-import { parseReceiptOcr } from '@/utils/parseReceiptOcr';
+import type { CaptureSource } from '@/services/ocr';
+import { readReceipt } from '@/services/ocr/pipeline';
 import { buildOcrMetadata } from '@/services/ocrMetadata';
 import { isDocumentScannerAvailable, scanReceiptDocument } from '@/services/documentScanner';
 import { importReceiptImage } from '@/services/receiptMedia';
@@ -73,34 +73,27 @@ export default function ScanScreen() {
     notes: '',
   });
 
-  const receiptFromImage = async (uri: string) => {
+  const receiptFromImage = async (uri: string, source: CaptureSource = 'unknown') => {
     const blank = emptyReceipt();
-    const ocr = await recognizeReceiptImage(uri);
-    if (!ocr) {
+    const { document, parsed } = await readReceipt(
+      uri,
+      { date: blank.date, currency: blank.currency },
+      source
+    );
+    if (!document) {
       if (__DEV__) console.log('[ocr] parsed: skipped (no ocr result)');
-      return { ...blank, ocr: buildOcrMetadata({ ...blank, items: [] }, false) };
-    }
-    const parsed = parseReceiptOcr(ocr, { date: blank.date, currency: blank.currency });
-    if (__DEV__) {
-      console.log('[ocr] parsed', {
-        merchant: parsed.merchant,
-        date: parsed.date,
-        amount: parsed.amount,
-        currency: parsed.currency,
-        category: parsed.category,
-        receiptNumber: parsed.receiptNumber,
-        notes: parsed.notes,
-        items: parsed.items?.map((item) => ({
-          label: item.label,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-        })),
-      });
+      return { ...blank, ocr: buildOcrMetadata(null, false) };
     }
     return {
       ...blank,
-      ...parsed,
-      notes: parsed.notes ?? '',
+      merchant: parsed.merchant.value,
+      date: parsed.date.value,
+      amount: parsed.amount.value,
+      currency: parsed.currency.value,
+      category: parsed.category.value,
+      receiptNumber: parsed.receiptNumber?.value,
+      notes: parsed.notes?.value ?? '',
+      items: parsed.items.value,
       ocr: buildOcrMetadata(parsed, true),
     };
   };
@@ -109,11 +102,15 @@ export default function ScanScreen() {
     router.push(`/receipt/${id}?scanned=1`, { withAnchor: true });
   };
 
-  const saveScannedImage = async (uri: string, source: 'camera' | 'library') => {
+  const saveScannedImage = async (
+    uri: string,
+    mediaSource: 'camera' | 'library',
+    ocrSource: CaptureSource = mediaSource
+  ) => {
     setIsProcessing(true);
     try {
-      const media = await importReceiptImage(uri, source);
-      const fields = await receiptFromImage(media.uri);
+      const media = await importReceiptImage(uri, mediaSource);
+      const fields = await receiptFromImage(media.uri, ocrSource);
       const id = await addReceipt({ ...fields, media });
       openReview(id);
     } catch (error) {
@@ -150,7 +147,7 @@ export default function ScanScreen() {
       return;
     }
     if (!uri) return;
-    await saveScannedImage(uri, 'camera');
+    await saveScannedImage(uri, 'camera', 'scanner');
   };
 
   /** Captures a photo, saves a managed copy, then opens the review screen. */

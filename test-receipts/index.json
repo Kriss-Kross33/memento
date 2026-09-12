@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-09-12T08:13:02.981Z",
+  "receipts": [
+    {
+      "id": "kfc-chinatown",
+      "dump": "ocr-dumps/kfc-chinatown.json",
+      "expected": "expected/kfc-chinatown.json"
+    },
+    {
+      "id": "kfc-grenada",
+      "dump": "ocr-dumps/kfc-grenada.json",
+      "expected": "expected/kfc-grenada.json"
+    }
+  ]
+}

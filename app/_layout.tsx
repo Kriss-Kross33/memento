@@ -118,6 +118,16 @@ function RootLayoutNav() {
             headerTintColor: Colors.text,
           }}
         />
+        {__DEV__ ? (
+          <Stack.Screen
+            name="dev/ocr-lab"
+            options={{
+              presentation: "card",
+              headerTitle: "OCR Lab",
+              headerTintColor: Colors.text,
+            }}
+          />
+        ) : null}
       </Stack>
     </View>
   );

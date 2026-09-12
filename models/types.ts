@@ -29,6 +29,8 @@ export interface ReceiptItem {
   quantity: number;
   unitPrice: number;
   total?: number;
+  /** Present on freshly parsed items; not persisted per line. */
+  confidence?: number;
 }
 
 /**
@@ -130,5 +132,8 @@ export interface OCRMetadata {
   dateConfidence?: number;
   totalConfidence?: number;
   currencyConfidence?: number;
+  categoryConfidence?: number;
+  itemsConfidence?: number;
+  overallConfidence?: number;
   processedAt?: string;
 }

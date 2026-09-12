@@ -11,6 +11,7 @@ import {
   Info,
   Mail,
   Check,
+  FlaskConical,
   Crown,
   SunMoon,
   Archive,
@@ -257,6 +258,21 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </View>
+
+      {__DEV__ ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Developer</Text>
+          <View style={styles.sectionContent}>
+            <SettingsRow
+              icon={<FlaskConical size={20} color={Colors.textSecondary} />}
+              title="OCR Lab"
+              subtitle="Inspect layout, confidence, and parser output"
+              onPress={() => router.push('/dev/ocr-lab')}
+              testID="ocr-lab-row"
+            />
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Support</Text>

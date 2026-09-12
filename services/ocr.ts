@@ -1,25 +1,16 @@
 import { Platform } from 'react-native';
-import { enhanceReceiptImage } from '@/services/ocrPreprocess';
-import { scoreOcrResult } from '@/utils/parseReceiptOcr';
+import type { OcrDocument, OcrResult } from '@/services/ocr/types';
+import { mlkitRecognizer } from '@/services/ocr/textRecognizer';
+import {
+  assessImageQuality,
+  choosePreprocessPlan,
+  type CaptureSource,
+} from '@/services/ocr/imageQuality';
+import { applyPreprocessPlan } from '@/services/ocrPreprocess';
+import { scoreOcrResult } from '@/utils/receipt';
 
-export type OcrBox = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export type OcrLine = {
-  text: string;
-  boundingBox: OcrBox;
-};
-
-export type OcrResult = {
-  text: string;
-  lines: OcrLine[];
-};
-
-const emptyBox = (): OcrBox => ({ x: 0, y: 0, width: 0, height: 0 });
+export type { OcrBox, OcrBlock, OcrDocument, OcrElement, OcrLine, OcrResult } from '@/services/ocr/types';
+export type { CaptureSource } from '@/services/ocr/imageQuality';
 
 const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<string, unknown>) => {
   if (!__DEV__) return;
@@ -43,105 +34,57 @@ const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<stri
   console.log(`[ocr] ${label} lines:\n${lines || '  <none>'}`);
 };
 
-const toOcrResult = (result: {
-  text?: string;
-  blocks?: Array<{
-    text?: string;
-    boundingBox?: OcrBox;
-    lines?: Array<{ text?: string; boundingBox?: OcrBox }>;
-  }>;
-}): OcrResult => {
-  const lines: OcrLine[] = [];
-  for (const block of result.blocks ?? []) {
-    if (block.lines?.length) {
-      for (const line of block.lines) {
-        const text = line.text?.trim();
-        if (!text) continue;
-        lines.push({ text, boundingBox: line.boundingBox ?? emptyBox() });
-      }
-    } else if (block.text?.trim()) {
-      lines.push({
-        text: block.text.trim(),
-        boundingBox: block.boundingBox ?? emptyBox(),
-      });
-    }
-  }
-  lines.sort((a, b) => a.boundingBox.y - b.boundingBox.y || a.boundingBox.x - b.boundingBox.x);
-  return { text: (result.text ?? '').trim(), lines };
-};
-
-const recognizeUri = async (uri: string, label: string): Promise<OcrResult | null> => {
+/**
+ * One ML Kit pass. No preprocess — callers apply a quality plan first.
+ */
+export async function recognizeTextOnImage(uri: string, label = 'pass'): Promise<OcrDocument | null> {
+  if (Platform.OS === 'web' || !uri) return null;
   try {
-    const { isSupported, recognizeText } = await import('expo-mlkit-ocr');
-    if (typeof isSupported === 'function' && !isSupported()) {
-      if (__DEV__) console.log(`[ocr] ${label}: mlkit not supported`);
-      return null;
-    }
-    const result = await recognizeText(uri);
+    const result = await mlkitRecognizer.recognize(uri);
     if (__DEV__) {
       console.log(`[ocr] ${label} mlkit raw`, {
         uri,
-        hasText: Boolean(result?.text?.trim()),
-        textLength: result?.text?.length ?? 0,
-        blockCount: result?.blocks?.length ?? 0,
+        hasText: Boolean(result.text?.trim()),
+        textLength: result.text?.length ?? 0,
+        blockCount: result.blocks?.length ?? 0,
       });
     }
-    if (!result?.text?.trim()) {
-      logOcrDump(label, { text: '', lines: [] }, { uri });
-      return { text: '', lines: [] };
-    }
-    const parsed = toOcrResult(result);
-    logOcrDump(label, parsed, { uri });
-    return parsed;
+    logOcrDump(label, result, { uri });
+    return result;
   } catch (error) {
     console.warn('[ocr] recognition unavailable', error);
     return null;
   }
-};
-
-const STRONG_SCORE = 10;
-
-const pickBetter = (a: OcrResult | null, b: OcrResult | null): OcrResult | null => {
-  if (!a) return b;
-  if (!b) return a;
-  return scoreOcrResult(b) > scoreOcrResult(a) ? b : a;
-};
+}
 
 /**
- * On-device OCR via Google ML Kit (Android) / ML Kit or Apple Vision (iOS).
- * JPEG-encodes / upscales the crop, then dual-passes the original if the
- * first read looks thin.
+ * Quality gate → at most one preprocess → one ML Kit pass.
  */
-export async function recognizeReceiptImage(uri: string): Promise<OcrResult | null> {
+export async function recognizeReceiptImage(
+  uri: string,
+  source: CaptureSource = 'unknown'
+): Promise<OcrDocument | null> {
   if (Platform.OS === 'web' || !uri) return null;
+  if (__DEV__) console.log('[ocr] start', { uri, source });
 
-  if (__DEV__) console.log('[ocr] start', { uri });
-
-  const enhancedUri = await enhanceReceiptImage(uri);
+  const quality = await assessImageQuality(uri, source);
+  const plan = choosePreprocessPlan(quality);
+  const prepared = await applyPreprocessPlan(uri, plan);
   if (__DEV__) {
     console.log('[ocr] preprocess', {
       original: uri,
-      enhanced: enhancedUri,
-      changed: enhancedUri !== uri,
+      enhanced: prepared,
+      changed: prepared !== uri,
+      plan: plan.reason,
+      width: quality.width,
+      height: quality.height,
     });
   }
 
-  const first = await recognizeUri(enhancedUri, enhancedUri === uri ? 'pass:original' : 'pass:enhanced');
-  if (enhancedUri === uri) {
-    logOcrDump('chosen', first, { reason: 'no-preprocess' });
-    return first;
-  }
-  if (first && scoreOcrResult(first) >= STRONG_SCORE) {
-    logOcrDump('chosen', first, { reason: `enhanced-strong score=${scoreOcrResult(first)}` });
-    return first;
-  }
-
-  const second = await recognizeUri(uri, 'pass:original');
-  const chosen = pickBetter(first, second);
-  logOcrDump('chosen', chosen, {
-    reason: 'dual-pass',
-    enhancedScore: first ? scoreOcrResult(first) : null,
-    originalScore: second ? scoreOcrResult(second) : null,
-  });
-  return chosen;
+  const result = await recognizeTextOnImage(
+    prepared,
+    plan.reason === 'none' ? 'pass:original' : `pass:${plan.reason}`
+  );
+  logOcrDump('chosen', result, { reason: `single-pass ${plan.reason}` });
+  return result;
 }

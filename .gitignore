@@ -43,3 +43,11 @@ core
 .specstory/
 .vscode/
 .cursorindexingignore
+
+# Receipt OCR corpus photos (dumps and expected JSON are committed)
+test-receipts/photos/
+test-receipts/**/*.jpg
+test-receipts/**/*.jpeg
+test-receipts/**/*.png
+test-receipts/**/*.webp
+test-receipts/**/*.heic

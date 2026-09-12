@@ -40,8 +40,9 @@ import SectionHeader from '@/components/SectionHeader';
 import Button from '@/components/Button';
 import ReceiptImageViewer from '@/components/ReceiptImageViewer';
 import { shareCsv, sharePdf } from '@/utils/exportShare';
-import { recognizeReceiptImage } from '@/services/ocr';
-import { parseReceiptOcr } from '@/utils/parseReceiptOcr';
+import { readReceipt } from '@/services/ocr/pipeline';
+import { buildOcrMetadata } from '@/services/ocrMetadata';
+import { isLowFieldConfidence, isLowItemConfidence, needsReview } from '@/utils/receipt/confidence';
 
 const looksLikeBrokenItems = (list: ReceiptItem[], total: number): boolean => {
   if (list.some((item) => /^(at|vat|tax|%|%?\s*at)$/i.test(item.label.trim()))) return true;
@@ -269,8 +270,8 @@ export default function ReceiptDetailScreen() {
     if (!uri || isRereading) return;
     setIsRereading(true);
     try {
-      const ocr = await recognizeReceiptImage(uri);
-      if (!ocr) {
+      const { document, parsed } = await readReceipt(uri, { date, currency }, receipt.media?.source ?? 'unknown');
+      if (!document) {
         Alert.alert(
           "Receipt couldn't be read",
           'The photo is still saved. Try again, or edit the items yourself.',
@@ -278,17 +279,19 @@ export default function ReceiptDetailScreen() {
         );
         return;
       }
-      const parsed = parseReceiptOcr(ocr, { date, currency });
-      const nextMerchant = parsed.merchant || merchant;
-      const nextDate = parsed.date || date;
-      const nextAmount = parsed.amount > 0 ? parsed.amount : parseFloat(amount) || 0;
-      const nextCategory = parsed.category || category;
-      const nextNotes = parsed.notes && !notes.trim() ? parsed.notes : notes;
-      const nextItems = parsed.items ?? [];
+      const nextMerchant = parsed.merchant.value || merchant;
+      const nextDate = parsed.date.value || date;
+      const nextAmount = parsed.amount.value > 0 ? parsed.amount.value : parseFloat(amount) || 0;
+      const nextCategory = parsed.category.value || category;
+      const nextCurrency = parsed.currency.value || currency;
+      const nextNotes = parsed.notes?.value && !notes.trim() ? parsed.notes.value : notes;
+      const nextItems = parsed.items.value;
+      const nextOcr = buildOcrMetadata(parsed, true);
       setMerchant(nextMerchant);
       setDate(nextDate);
       setAmount(String(nextAmount));
       setCategory(nextCategory);
+      setCurrency(nextCurrency);
       setNotes(nextNotes);
       setItems(nextItems);
       if (id) {
@@ -296,10 +299,12 @@ export default function ReceiptDetailScreen() {
           merchant: nextMerchant,
           date: nextDate,
           amount: nextAmount,
+          currency: nextCurrency,
           category: nextCategory,
           notes: nextNotes,
           items: nextItems,
-          subtotal: nextItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0),
+          subtotal: nextItems.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0),
+          ocr: nextOcr,
         });
       }
       if (Platform.OS !== 'web') {
@@ -317,6 +322,7 @@ export default function ReceiptDetailScreen() {
     }
   }, [
     receipt?.media?.uri,
+    receipt?.media?.source,
     isRereading,
     date,
     currency,
@@ -379,6 +385,11 @@ export default function ReceiptDetailScreen() {
   const isNewReceipt = receipt.merchant === '' && receipt.amount === 0;
   const fromScan = scanned === '1' || scanned === 'true';
   const detected = fromScan || receipt.ocr?.processingStatus === 'done';
+  const overallConfidence = receipt.ocr?.overallConfidence;
+  const verifyNeeded = detected && needsReview(overallConfidence);
+  const merchantNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.merchantConfidence);
+  const amountNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.totalConfidence);
+  const itemsNeedCheck = detected && isLowFieldConfidence(receipt.ocr?.itemsConfidence);
   const canSave = fromScan || hasChanges;
   const headerTitle =
     fromScan || (isNewReceipt && hasMedia)
@@ -509,11 +520,14 @@ export default function ReceiptDetailScreen() {
         )}
 
         {detected ? (
-          <View style={styles.detectBanner}>
-            <Text style={styles.detectBannerTitle}>Detected from the receipt</Text>
+          <View style={[styles.detectBanner, verifyNeeded && styles.detectBannerWarn]}>
+            <Text style={styles.detectBannerTitle}>
+              {verifyNeeded ? 'Please verify these details' : 'Detected from the receipt'}
+            </Text>
             <Text style={styles.detectBannerText}>
-              These details were read on your device. Check merchant, date, and total before saving —
-              scanning is not always exact.
+              {verifyNeeded
+                ? 'Some fields were guessed with low confidence. Check merchant, date, total, and items before saving.'
+                : 'These details were read on your device. Check merchant, date, and total before saving — scanning is not always exact.'}
             </Text>
           </View>
         ) : null}
@@ -534,6 +548,7 @@ export default function ReceiptDetailScreen() {
               accessibilityLabel="Total amount"
             />
           </View>
+          {amountNeedsCheck ? <Text style={styles.fieldHint}>Check this total</Text> : null}
           <TextInput
             style={styles.merchantInput}
             value={merchant}
@@ -543,6 +558,7 @@ export default function ReceiptDetailScreen() {
             testID="merchant-input"
             accessibilityLabel="Merchant name"
           />
+          {merchantNeedsCheck ? <Text style={styles.fieldHint}>Check this merchant</Text> : null}
           <Text style={styles.dateLine}>{formatFullDate(date)}</Text>
         </View>
 
@@ -706,7 +722,7 @@ export default function ReceiptDetailScreen() {
               {items.map((item, index) => (
                 <React.Fragment key={item.id}>
                   {index > 0 && <View style={styles.divider} />}
-                  <View style={styles.itemRow}>
+                  <View style={[styles.itemRow, (isLowItemConfidence(item.confidence) || (item.confidence == null && itemsNeedCheck)) && styles.itemRowWarn]}>
                     <TextInput
                       style={styles.itemLabel}
                       value={item.label}
@@ -1079,6 +1095,14 @@ const createStyles = (Colors: ThemeColors) =>
     backgroundColor: Colors.surfaceSecondary,
     borderRadius: 10,
   },
+  detectBannerWarn: {
+    backgroundColor: Colors.warningLight,
+  },
+  fieldHint: {
+    fontSize: 12,
+    color: Colors.warning,
+    marginTop: 4,
+  },
   detectBannerTitle: {
     fontSize: 14,
     fontWeight: '600' as const,
@@ -1132,6 +1156,10 @@ const createStyles = (Colors: ThemeColors) =>
     paddingVertical: 10,
     paddingHorizontal: 12,
     gap: 8,
+  },
+  itemRowWarn: {
+    backgroundColor: Colors.warningLight,
+    borderRadius: 8,
   },
   itemLabel: {
     flex: 1,

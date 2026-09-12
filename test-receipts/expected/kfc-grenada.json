@@ -1,0 +1,12 @@
+{
+  "id": "kfc-grenada",
+  "merchant": "KFC",
+  "date": "2018-05-09",
+  "amount": 24.5,
+  "currency": "GHS",
+  "items": [
+    { "label": "Popcorn Large", "quantity": 2, "unitPrice": 8.5, "total": 17 },
+    { "label": "Fries reg", "quantity": 1, "unitPrice": 4.25, "total": 4.25 },
+    { "label": "Cola Med", "quantity": 1, "unitPrice": 3.25, "total": 3.25 }
+  ]
+}

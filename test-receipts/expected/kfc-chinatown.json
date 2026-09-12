@@ -1,0 +1,10 @@
+{
+  "id": "kfc-chinatown",
+  "merchant": "KFC Chinatown Point",
+  "date": "2014-10-13",
+  "amount": 5,
+  "currency": "SGD",
+  "items": [
+    { "label": "TT-1P DR WING", "quantity": 5, "unitPrice": 1, "total": 5 }
+  ]
+}

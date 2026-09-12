@@ -66,6 +66,9 @@ type OcrRow = {
   date_confidence: number | null;
   total_confidence: number | null;
   currency_confidence: number | null;
+  category_confidence: number | null;
+  items_confidence: number | null;
+  overall_confidence: number | null;
   processed_at: string | null;
 };
 
@@ -130,6 +133,9 @@ CREATE TABLE IF NOT EXISTS ocr_metadata (
   date_confidence REAL,
   total_confidence REAL,
   currency_confidence REAL,
+  category_confidence REAL,
+  items_confidence REAL,
+  overall_confidence REAL,
   processed_at TEXT,
   FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
 );
@@ -214,6 +220,9 @@ const ocrFromRow = (row: OcrRow): OCRMetadata => ({
   dateConfidence: optNum(row.date_confidence),
   totalConfidence: optNum(row.total_confidence),
   currencyConfidence: optNum(row.currency_confidence),
+  categoryConfidence: optNum(row.category_confidence),
+  itemsConfidence: optNum(row.items_confidence),
+  overallConfidence: optNum(row.overall_confidence),
   processedAt: optStr(row.processed_at),
 });
 
@@ -288,6 +297,13 @@ export class SqliteDataSource implements LocalDataSource {
     const db = await SQLite.openDatabaseAsync('receiptsnap.db');
     await db.execAsync(SCHEMA);
     await db.execAsync('PRAGMA foreign_keys = ON;');
+    for (const column of ['category_confidence', 'items_confidence', 'overall_confidence']) {
+      try {
+        await db.execAsync(`ALTER TABLE ocr_metadata ADD COLUMN ${column} REAL`);
+      } catch {
+        // Column already exists on upgraded databases.
+      }
+    }
     return new SqliteDataSource(db);
   }
 
@@ -441,8 +457,9 @@ export class SqliteDataSource implements LocalDataSource {
         await this.runAsync(
           `INSERT INTO ocr_metadata (
             id, receipt_id, processing_status, merchant_confidence, date_confidence,
-            total_confidence, currency_confidence, processed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            total_confidence, currency_confidence, category_confidence, items_confidence,
+            overall_confidence, processed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             record.ocr.id || `ocr_${record.id}`,
             record.id,
@@ -451,6 +468,9 @@ export class SqliteDataSource implements LocalDataSource {
             record.ocr.dateConfidence ?? null,
             record.ocr.totalConfidence ?? null,
             record.ocr.currencyConfidence ?? null,
+            record.ocr.categoryConfidence ?? null,
+            record.ocr.itemsConfidence ?? null,
+            record.ocr.overallConfidence ?? null,
             record.ocr.processedAt ?? null,
           ]
         );
