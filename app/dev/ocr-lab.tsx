@@ -17,6 +17,8 @@ import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
 import { readReceipt, type ReadReceiptResult } from '@/services/ocr/pipeline';
+import { getOcrEnginePreference, setOcrEnginePreference } from '@/services/ocr';
+import type { OcrEnginePreference } from '@/services/ocr/types';
 import { toISODate } from '@/components/DatePickerField';
 import Button from '@/components/Button';
 
@@ -31,6 +33,7 @@ export default function OcrLabScreen() {
   const [imageSize, setImageSize] = useState({ width: 1, height: 1 });
   const [result, setResult] = useState<ReadReceiptResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [engine, setEngine] = useState<OcrEnginePreference>(getOcrEnginePreference());
 
   if (!__DEV__) {
     return (
@@ -103,6 +106,24 @@ export default function OcrLabScreen() {
         Run the receipt pipeline on a photo. Teal is the merchant, red is the total, blue is an item
         line. Confidence mixes OCR, semantics, geometry, and validation.
       </Text>
+      <View style={styles.engineRow}>
+        {(['auto', 'vision', 'mlkit'] as const).map((id) => (
+          <TouchableOpacity
+            key={id}
+            style={[styles.engineChip, engine === id && styles.engineChipSelected]}
+            onPress={() => {
+              setEngine(id);
+              setOcrEnginePreference(id);
+            }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: engine === id }}
+          >
+            <Text style={[styles.engineChipText, engine === id && styles.engineChipTextSelected]}>
+              {id === 'auto' ? 'Auto' : id === 'vision' ? 'Vision' : 'ML Kit'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
       <Button title={uri ? 'Choose another photo' : 'Choose a receipt photo'} onPress={() => void pickPhoto()} />
 
       {busy ? (
@@ -173,7 +194,8 @@ export default function OcrLabScreen() {
             Review {parsed.reviewRequirements.length === 0 ? 'none' : parsed.reviewRequirements.map((item) => item.field).join(', ')}
           </Text>
           <Text style={styles.meta}>
-            Plan {result?.plan.reason} · retries {result?.retries ?? 0} · {lines.length} lines
+            Engine {result?.engine ?? 'auto'} · plan {result?.plan.reason} · retries {result?.retries ?? 0} ·{' '}
+            {lines.length} lines
             {parsed.amount.sourceText ? ` · total from “${parsed.amount.sourceText}”` : ''}
           </Text>
         </View>
@@ -260,6 +282,16 @@ const createStyles = (Colors: ThemeColors) =>
     container: { flex: 1, backgroundColor: Colors.background },
     content: { padding: 16, paddingBottom: 40, gap: 16 },
     lede: { fontSize: 14, lineHeight: 20, color: Colors.textSecondary },
+    engineRow: { flexDirection: 'row', gap: 8 },
+    engineChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+      backgroundColor: Colors.surfaceSecondary,
+    },
+    engineChipSelected: { backgroundColor: Colors.primaryMuted },
+    engineChipText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+    engineChipTextSelected: { color: Colors.primary },
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
     emptyText: { fontSize: 15, color: Colors.textSecondary, textAlign: 'center' },
     busy: { flexDirection: 'row', alignItems: 'center', gap: 10 },

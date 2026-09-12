@@ -8,7 +8,7 @@ Install [Node.js](https://github.com/nvm-sh/nvm) (20.19.4+) and [Yarn](https://y
 
 ```bash
 git clone <YOUR_GIT_URL>
-cd receipt-snap
+cd receipt-snap   # repository folder; the app is Memento
 yarn install
 ```
 
@@ -31,7 +31,7 @@ This opens the Expo dev server. From there:
 - press `a` for Android emulator
 - press `w` for web
 
-**Receipt detection** uses Apple VisionKit and Google ML Kit Document Scanner (edge find, crop, then OCR). Rebuild after installing:
+**Receipt detection** uses Apple VisionKit and Google ML Kit Document Scanner. **iOS OCR** uses Apple Vision (`memento-vision`); **Android OCR** uses ML Kit. A custom development build is required — Expo Go cannot load the Vision module. Rebuild after installing:
 
 ```bash
 yarn android:device
@@ -69,6 +69,10 @@ eas build --profile development --platform ios
 eas build --profile development --platform android
 yarn start -- --dev-client
 ```
+
+## Receipt corpus
+
+Parser accuracy is measured against `test-receipts/`. Add an OCR dump, expected fields, and tags in `test-receipts/manifest.json`, then run `npm run corpus:index`.
 
 ## Troubleshooting
 

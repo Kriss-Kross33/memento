@@ -5,6 +5,11 @@ export type OcrBox = {
   height: number;
 };
 
+export type OcrCandidate = {
+  text: string;
+  confidence: number;
+};
+
 export type OcrElement = {
   text: string;
   boundingBox: OcrBox;
@@ -16,7 +21,11 @@ export type OcrLine = {
   boundingBox: OcrBox;
   confidence?: number;
   elements?: OcrElement[];
+  candidates?: OcrCandidate[];
 };
+
+export type OcrEngineId = 'vision' | 'mlkit';
+export type OcrEnginePreference = 'auto' | OcrEngineId;
 
 export type OcrBlock = {
   text: string;
@@ -30,6 +39,7 @@ export type OcrDocument = {
   height: number;
   blocks: OcrBlock[];
   lines: OcrLine[];
+  meanConfidence?: number;
 };
 
 // Compatibility aliases used by older imports.

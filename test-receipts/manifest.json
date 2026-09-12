@@ -1,0 +1,33 @@
+{
+  "taxonomy": [
+    "ghana",
+    "singapore",
+    "united-states",
+    "restaurant",
+    "supermarket",
+    "fuel",
+    "utility",
+    "thermal",
+    "low-light",
+    "angled",
+    "handwritten",
+    "damaged"
+  ],
+  "receipts": {
+    "kfc-chinatown": {
+      "region": "singapore",
+      "venue": "restaurant",
+      "conditions": ["thermal"]
+    },
+    "kfc-grenada": {
+      "region": "grenada",
+      "venue": "restaurant",
+      "conditions": ["thermal"]
+    },
+    "walmart-gallatin": {
+      "region": "united-states",
+      "venue": "supermarket",
+      "conditions": ["thermal"]
+    }
+  }
+}

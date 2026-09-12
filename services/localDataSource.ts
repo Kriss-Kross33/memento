@@ -39,6 +39,7 @@ export interface LocalDataSource {
   getAllTags(): Promise<string[]>;
 }
 
+/** Historical AsyncStorage prefixes — do not rename or existing installs lose data. */
 const receiptKey = (id: string) => `receiptsnap_receipt_${id}`;
 const mediaKey = (id: string) => `receiptsnap_media_${id}`;
 const RECEIPT_INDEX_KEY = 'receiptsnap_receipt_index';

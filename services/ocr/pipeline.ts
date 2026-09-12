@@ -9,7 +9,8 @@ import {
   type PreprocessPlan,
 } from '@/services/ocr/imageQuality';
 import { applyPreprocessPlan } from '@/services/ocrPreprocess';
-import { recognizeTextOnImage } from '@/services/ocr';
+import { getActiveOcrEngine, recognizeTextOnImage } from '@/services/ocr';
+import type { OcrEngineId } from '@/services/ocr/types';
 import { parseReceiptDocument, scoreOcrResult } from '@/utils/receipt';
 import { attachReview, RETRY_CONFIDENCE } from '@/utils/receipt/confidence';
 import type { ParseFallback, ParsedReceipt } from '@/utils/receipt/types';
@@ -24,6 +25,7 @@ export type ReadReceiptResult = {
   quality: ImageQuality;
   plan: PreprocessPlan;
   retries: number;
+  engine: OcrEngineId | 'unsupported';
   skippedReason?: CaptureAdvice;
 };
 
@@ -74,6 +76,7 @@ export async function readReceipt(
       quality,
       plan: { reason: 'none', issues: quality.issues },
       retries: 0,
+      engine: getActiveOcrEngine(),
       skippedReason: quality.advice,
     };
   }
@@ -136,5 +139,5 @@ export async function readReceipt(
     });
   }
 
-  return { document, parsed, quality, plan, retries };
+  return { document, parsed, quality, plan, retries, engine: getActiveOcrEngine() };
 }

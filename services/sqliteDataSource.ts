@@ -294,7 +294,7 @@ export class SqliteDataSource implements LocalDataSource {
 
   static async open(): Promise<SqliteDataSource> {
     const SQLite = await import('expo-sqlite');
-    const db = await SQLite.openDatabaseAsync('receiptsnap.db');
+    const db = await SQLite.openDatabaseAsync('receiptsnap.db'); // historical filename — do not rename
     await db.execAsync(SCHEMA);
     await db.execAsync('PRAGMA foreign_keys = ON;');
     for (const column of ['category_confidence', 'items_confidence', 'overall_confidence']) {

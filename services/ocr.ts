@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import type { OcrDocument, OcrResult } from '@/services/ocr/types';
-import { getTextRecognizer } from '@/services/ocr/engine';
+import { getActiveOcrEngine, getTextRecognizer } from '@/services/ocr/engine';
 import {
   assessImageQuality,
   choosePreprocessPlan,
@@ -11,8 +11,9 @@ import { scoreOcrResult } from '@/utils/receipt';
 
 export type { OcrBox, OcrBlock, OcrDocument, OcrElement, OcrLine, OcrResult } from '@/services/ocr/types';
 export type { CaptureSource } from '@/services/ocr/imageQuality';
-export { getTextRecognizer } from '@/services/ocr/engine';
+export { getActiveOcrEngine, getTextRecognizer } from '@/services/ocr/engine';
 export type { TextRecognizer } from '@/services/ocr/textRecognizer';
+export { getOcrEnginePreference, setOcrEnginePreference } from '@/services/ocr/enginePreference';
 
 const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<string, unknown>) => {
   if (!__DEV__) return;
@@ -37,14 +38,16 @@ const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<stri
 };
 
 /**
- * One ML Kit pass. No preprocess — callers apply a quality plan first.
+ * One recognizer pass. No preprocess — callers apply a quality plan first.
  */
 export async function recognizeTextOnImage(uri: string, label = 'pass'): Promise<OcrDocument | null> {
   if (Platform.OS === 'web' || !uri) return null;
   try {
+    const engine = getActiveOcrEngine();
     const result = await getTextRecognizer().recognize(uri);
     if (__DEV__) {
-      console.log(`[ocr] ${label} mlkit raw`, {
+      console.log(`[ocr] ${label} ${engine} raw`, {
+        engine,
         uri,
         hasText: Boolean(result.text?.trim()),
         textLength: result.text?.length ?? 0,
@@ -60,7 +63,7 @@ export async function recognizeTextOnImage(uri: string, label = 'pass'): Promise
 }
 
 /**
- * Quality gate → at most one preprocess → one ML Kit pass.
+ * Quality gate → at most one preprocess → one OCR pass.
  */
 export async function recognizeReceiptImage(
   uri: string,

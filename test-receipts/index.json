@@ -1,20 +1,49 @@
 {
-  "generatedAt": "2026-09-12T08:49:15.862Z",
+  "generatedAt": "2026-09-12T18:04:31.827Z",
+  "taxonomy": [
+    "ghana",
+    "singapore",
+    "united-states",
+    "restaurant",
+    "supermarket",
+    "fuel",
+    "utility",
+    "thermal",
+    "low-light",
+    "angled",
+    "handwritten",
+    "damaged"
+  ],
   "receipts": [
     {
       "id": "kfc-chinatown",
       "dump": "ocr-dumps/kfc-chinatown.json",
-      "expected": "expected/kfc-chinatown.json"
+      "expected": "expected/kfc-chinatown.json",
+      "region": "singapore",
+      "venue": "restaurant",
+      "conditions": [
+        "thermal"
+      ]
     },
     {
       "id": "kfc-grenada",
       "dump": "ocr-dumps/kfc-grenada.json",
-      "expected": "expected/kfc-grenada.json"
+      "expected": "expected/kfc-grenada.json",
+      "region": "grenada",
+      "venue": "restaurant",
+      "conditions": [
+        "thermal"
+      ]
     },
     {
       "id": "walmart-gallatin",
       "dump": "ocr-dumps/walmart-gallatin.json",
-      "expected": "expected/walmart-gallatin.json"
+      "expected": "expected/walmart-gallatin.json",
+      "region": "united-states",
+      "venue": "supermarket",
+      "conditions": [
+        "thermal"
+      ]
     }
   ]
 }
