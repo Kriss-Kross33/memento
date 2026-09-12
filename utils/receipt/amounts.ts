@@ -1,5 +1,13 @@
-import type { LayoutDocument, LayoutLine } from '@/utils/receipt/types';
-import { fuzzyHasTerm, SUBTOTAL_TERMS, TAX_TERMS, TOTAL_TERMS, PAYMENT_TERMS, CHANGE_TERMS } from '@/utils/receipt/vocabulary';
+import type { AmountCandidate, Anchor, LayoutDocument, LayoutLine, ReceiptRegions } from '@/utils/receipt/types';
+import {
+  CHANGE_TERMS,
+  PAYMENT_TERMS,
+  SUBTOTAL_TERMS,
+  TAX_TERMS,
+  fuzzyHasTerm,
+  isNonPayableTotal,
+  isStrongTotalLabel,
+} from '@/utils/receipt/vocabulary';
 
 const isPhoneLike = (raw: string): boolean => {
   const digits = raw.replace(/\D/g, '');
@@ -47,9 +55,7 @@ export const extractAmounts = (line: string): number[] => {
   return matches.map(parseAmountToken).filter((n): n is number => n !== null);
 };
 
-const isTotalItemSold = (text: string): boolean => /total\s*item\s*sold/i.test(text);
-
-const contextFor = (layout: LayoutDocument, line: LayoutLine, position: number): string => {
+export const contextFor = (layout: LayoutDocument, line: LayoutLine, position: number): string => {
   const row = layout.rows.find((entry) => entry.lines.some((item) => item.index === line.index));
   const rowText = row ? row.lines.map((item) => item.text).join(' ') : line.text;
   const prev = layout.lines[position - 1];
@@ -58,27 +64,90 @@ const contextFor = (layout: LayoutDocument, line: LayoutLine, position: number):
   return prevClose ? `${prev.text} ${rowText}` : rowText;
 };
 
-export const extractAmountCandidates = (layout: LayoutDocument) =>
-  layout.lines.flatMap((line, position) =>
-    extractAmounts(line.text).map((value) => {
-      const context = contextFor(layout, line, position);
-      const roleScores = {
-        itemPrice: line.rightColumnScore * 0.8 + (line.normalizedY < 0.7 ? 0.2 : 0),
-        subtotal: fuzzyHasTerm(context, SUBTOTAL_TERMS) ? 0.95 : 0.1,
-        tax: fuzzyHasTerm(context, TAX_TERMS) ? 0.95 : 0.1,
-        total: fuzzyHasTerm(context, TOTAL_TERMS) && !isTotalItemSold(context) ? 0.95 : 0.1,
-        cash: fuzzyHasTerm(context, PAYMENT_TERMS) ? 0.7 : 0.1,
-        change: fuzzyHasTerm(context, CHANGE_TERMS) ? 0.95 : 0.05,
-        unknown: 0.2,
-      };
-      const confidence = Math.max(...Object.values(roleScores));
-      return {
-        value,
-        text: context,
-        box: line.box,
-        lineIndex: line.index,
-        roleScores,
-        confidence,
-      };
-    })
-  );
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+const nearestAnchorDistance = (anchors: Anchor[], role: Anchor['role'], lineIndex: number): number => {
+  const matches = anchors.filter((anchor) => anchor.role === role);
+  if (matches.length === 0) return 99;
+  return Math.min(...matches.map((anchor) => Math.abs(anchor.lineIndex - lineIndex)));
+};
+
+export const scoreAmountRoles = (
+  line: LayoutLine,
+  context: string,
+  value: number,
+  allValues: number[],
+  anchors: Anchor[],
+  regions?: ReceiptRegions
+): AmountCandidate['roleScores'] => {
+  const inItems = regions ? line.index < regions.itemMaxLineIndex : line.normalizedY < 0.7;
+  const inTotals = regions
+    ? line.index >= regions.totalsMinLineIndex && line.index <= regions.totalsMaxLineIndex + 1
+    : line.normalizedY >= 0.62;
+  const repeats = allValues.filter((entry) => Math.abs(entry - value) < 0.005).length;
+  const neighborHasWords = /[a-z]{3}/i.test(context.replace(/[\d.,$£€₵]/g, ''));
+  const taxNear = nearestAnchorDistance(anchors, 'tax', line.index) <= 1 || fuzzyHasTerm(context, TAX_TERMS);
+  const paymentNear =
+    nearestAnchorDistance(anchors, 'payment', line.index) <= 1 || fuzzyHasTerm(context, PAYMENT_TERMS);
+  const changeNear = nearestAnchorDistance(anchors, 'change', line.index) <= 1 || fuzzyHasTerm(context, CHANGE_TERMS);
+  const subtotalLabel = fuzzyHasTerm(context, SUBTOTAL_TERMS);
+  const strongTotal = isStrongTotalLabel(context) && !isNonPayableTotal(context);
+
+  const labelScore = strongTotal ? 0.95 : 0.08;
+  const regionScore = inTotals ? 0.22 : inItems ? -0.12 : 0.04;
+  const rightAlignmentScore = line.rightColumnScore * 0.18;
+  const neighborScore = neighborHasWords && strongTotal ? 0.08 : 0;
+  const taxPenalty = taxNear && !strongTotal ? 0.55 : taxNear ? 0.2 : 0;
+  const paymentPenalty = paymentNear && !strongTotal ? 0.35 : 0;
+  const itemPenalty = inItems && repeats >= 3 ? 0.28 : 0;
+
+  return {
+    itemPrice: clamp01(
+      line.rightColumnScore * 0.45 +
+        (inItems ? 0.28 : 0) +
+        (neighborHasWords && inItems ? 0.12 : 0) -
+        (strongTotal ? 0.45 : 0) -
+        (taxNear || paymentNear || changeNear || subtotalLabel ? 0.4 : 0)
+    ),
+    subtotal: clamp01((subtotalLabel ? 0.92 : 0.06) + (inTotals ? 0.08 : 0)),
+    tax: clamp01((taxNear ? 0.9 : 0.06) + (inTotals ? 0.06 : 0) - (strongTotal ? 0.25 : 0)),
+    total: clamp01(
+      labelScore + regionScore + rightAlignmentScore + neighborScore - taxPenalty - paymentPenalty - itemPenalty
+    ),
+    cash: clamp01((paymentNear ? 0.72 : 0.06) + (inTotals ? 0.08 : 0) - (strongTotal ? 0.3 : 0)),
+    change: clamp01(changeNear ? 0.92 : 0.04),
+    unknown: 0.18,
+  };
+};
+
+export const extractAmountCandidates = (
+  layout: LayoutDocument,
+  anchors: Anchor[] = [],
+  regions?: ReceiptRegions
+): AmountCandidate[] => {
+  const collected = layout.lines.flatMap((line, position) => {
+    const values = extractAmounts(line.text);
+    const context = contextFor(layout, line, position);
+    return values.map((value) => ({ line, position, value, context }));
+  });
+  const allValues = collected.map((entry) => entry.value);
+
+  return collected.map((entry) => {
+    const roleScores = scoreAmountRoles(
+      entry.line,
+      entry.context,
+      entry.value,
+      allValues,
+      anchors,
+      regions
+    );
+    return {
+      value: entry.value,
+      text: entry.context,
+      box: entry.line.box,
+      lineIndex: entry.line.index,
+      roleScores,
+      confidence: Math.max(...Object.values(roleScores)),
+    };
+  });
+};

@@ -42,7 +42,10 @@ import ReceiptImageViewer from '@/components/ReceiptImageViewer';
 import { shareCsv, sharePdf } from '@/utils/exportShare';
 import { readReceipt } from '@/services/ocr/pipeline';
 import { buildOcrMetadata } from '@/services/ocrMetadata';
-import { isLowFieldConfidence, isLowItemConfidence, needsReview } from '@/utils/receipt/confidence';
+import { isLowFieldConfidence, isLowItemConfidence, reviewSummaryFromOcr } from '@/utils/receipt/confidence';
+import SmartReviewCard from '@/components/SmartReviewCard';
+import { useSubscription } from '@/context/SubscriptionContext';
+import type { ReviewField } from '@/utils/receipt/types';
 
 const looksLikeBrokenItems = (list: ReceiptItem[], total: number): boolean => {
   if (list.some((item) => /^(at|vat|tax|%|%?\s*at)$/i.test(item.label.trim()))) return true;
@@ -91,6 +94,7 @@ export default function ReceiptDetailScreen() {
   const scanned = Array.isArray(params.scanned) ? params.scanned[0] : params.scanned;
   const router = useRouter();
   const { getReceipt, updateReceipt, deleteReceipt, attachMedia } = useReceipts();
+  const { hasPro, requestScan, consumeScan } = useSubscription();
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
 
@@ -116,6 +120,7 @@ export default function ReceiptDetailScreen() {
   const [isRereading, setIsRereading] = useState(false);
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [priceDraft, setPriceDraft] = useState('');
+  const [focusField, setFocusField] = useState<ReviewField | null>(null);
   const rereadAttempted = useRef(false);
 
   const lineTotalOf = (item: ReceiptItem): number =>
@@ -213,7 +218,7 @@ export default function ReceiptDetailScreen() {
   const handleDelete = () => {
     Alert.alert(
       'Delete Receipt',
-      'This permanently removes the receipt, its line items, and the photo stored in ReceiptSnap. Photos in your library are not touched. This cannot be undone.',
+      'This permanently removes the receipt, its line items, and the photo stored in Memento. Photos in your library are not touched. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -257,7 +262,7 @@ export default function ReceiptDetailScreen() {
     } catch {
       Alert.alert(
         "Receipt image couldn't be processed",
-        'The photo could not be copied into ReceiptSnap. Try again.',
+        'The photo could not be copied into Memento. Try again.',
         [{ text: 'Try Again', onPress: () => void importImage() }, { text: 'Cancel', style: 'cancel' }]
       );
     } finally {
@@ -265,9 +270,16 @@ export default function ReceiptDetailScreen() {
     }
   }, [id, attachMedia, isImporting]);
 
-  const rereadFromPhoto = useCallback(async () => {
+  const rereadFromPhoto = useCallback(async (countUsage = false) => {
     const uri = receipt?.media?.uri;
     if (!uri || isRereading) return;
+    if (countUsage) {
+      const allowed = await requestScan();
+      if (!allowed) {
+        router.push('/paywall?reason=scans');
+        return;
+      }
+    }
     setIsRereading(true);
     try {
       const { document, parsed } = await readReceipt(uri, { date, currency }, receipt.media?.source ?? 'unknown');
@@ -307,6 +319,7 @@ export default function ReceiptDetailScreen() {
           ocr: nextOcr,
         });
       }
+      if (countUsage) await consumeScan();
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -332,6 +345,9 @@ export default function ReceiptDetailScreen() {
     category,
     id,
     updateReceipt,
+    requestScan,
+    consumeScan,
+    router,
   ]);
 
   useEffect(() => {
@@ -385,11 +401,20 @@ export default function ReceiptDetailScreen() {
   const isNewReceipt = receipt.merchant === '' && receipt.amount === 0;
   const fromScan = scanned === '1' || scanned === 'true';
   const detected = fromScan || receipt.ocr?.processingStatus === 'done';
-  const overallConfidence = receipt.ocr?.overallConfidence;
-  const verifyNeeded = detected && needsReview(overallConfidence);
+  const review = reviewSummaryFromOcr(receipt.ocr, {
+    merchant,
+    amount: parseFloat(amount) || 0,
+    itemCount: items.length,
+    date,
+    category,
+    currency,
+  });
   const merchantNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.merchantConfidence);
   const amountNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.totalConfidence);
+  const dateNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.dateConfidence);
+  const categoryNeedsCheck = detected && isLowFieldConfidence(receipt.ocr?.categoryConfidence);
   const itemsNeedCheck = detected && isLowFieldConfidence(receipt.ocr?.itemsConfidence);
+  const uncertainItems = items.filter((item) => isLowItemConfidence(item.confidence));
   const canSave = fromScan || hasChanges;
   const headerTitle =
     fromScan || (isNewReceipt && hasMedia)
@@ -519,17 +544,29 @@ export default function ReceiptDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {detected ? (
-          <View style={[styles.detectBanner, verifyNeeded && styles.detectBannerWarn]}>
-            <Text style={styles.detectBannerTitle}>
-              {verifyNeeded ? 'Please verify these details' : 'Detected from the receipt'}
-            </Text>
-            <Text style={styles.detectBannerText}>
-              {verifyNeeded
-                ? 'Some fields were guessed with low confidence. Check merchant, date, total, and items before saving.'
-                : 'These details were read on your device. Check merchant, date, and total before saving — scanning is not always exact.'}
-            </Text>
-          </View>
+        {detected && fromScan ? (
+          <SmartReviewCard
+            state={review.state}
+            headline={review.headline}
+            subtitle={review.subtitle}
+            requirements={review.requirements}
+            values={{
+              merchant: merchant || undefined,
+              date: formatFullDate(date),
+              amount: formatMoney(parseFloat(amount) || 0, currency),
+              category,
+              items:
+                uncertainItems.length > 0
+                  ? uncertainItems
+                      .slice(0, 2)
+                      .map((item) => `${item.quantity} × ${item.label || 'uncertain text'}`)
+                      .join(' · ')
+                  : items.length > 0
+                    ? `${items.length} ${items.length === 1 ? 'item' : 'items'}`
+                    : undefined,
+            }}
+            onSelectField={setFocusField}
+          />
         ) : null}
 
         {/* Merchant + total */}
@@ -558,15 +595,17 @@ export default function ReceiptDetailScreen() {
             testID="merchant-input"
             accessibilityLabel="Merchant name"
           />
-          {merchantNeedsCheck ? <Text style={styles.fieldHint}>Check this merchant</Text> : null}
+          {merchantNeedsCheck || focusField === 'merchant' ? <Text style={styles.fieldHint}>Check this merchant</Text> : null}
           <Text style={styles.dateLine}>{formatFullDate(date)}</Text>
         </View>
 
         {/* Details */}
         <View style={styles.form}>
           <DatePickerField value={date} onChange={setDate} testID="date-field" />
+          {dateNeedsCheck || focusField === 'date' ? <Text style={[styles.fieldHint, styles.fieldHintPad]}>Check this date</Text> : null}
           <View style={styles.divider} />
           <CategoryField value={category} onChange={setCategory} testID="category-field" />
+          {categoryNeedsCheck || focusField === 'category' ? <Text style={[styles.fieldHint, styles.fieldHintPad]}>Check this category</Text> : null}
           <View style={styles.divider} />
           <View style={styles.currencyRow}>
             <View style={styles.currencyIconSlot}>
@@ -809,7 +848,7 @@ export default function ReceiptDetailScreen() {
           {hasMedia && mediaOk ? (
             <TouchableOpacity
               style={styles.rereadItems}
-              onPress={() => void rereadFromPhoto()}
+              onPress={() => void rereadFromPhoto(true)}
               disabled={isRereading}
               activeOpacity={0.7}
               accessibilityRole="button"
@@ -838,7 +877,13 @@ export default function ReceiptDetailScreen() {
           </TouchableOpacity>
           <Text style={styles.exportDot}>·</Text>
           <TouchableOpacity
-            onPress={() => void sharePdf([receipt], receipt.merchant || 'Receipt')}
+            onPress={() => {
+              if (!hasPro) {
+                router.push('/paywall?reason=export');
+                return;
+              }
+              void sharePdf([receipt], receipt.merchant || 'Receipt');
+            }}
             accessibilityRole="button"
             accessibilityLabel="Export this receipt as PDF"
           >
@@ -1102,6 +1147,10 @@ const createStyles = (Colors: ThemeColors) =>
     fontSize: 12,
     color: Colors.warning,
     marginTop: 4,
+  },
+  fieldHintPad: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
   },
   detectBannerTitle: {
     fontSize: 14,

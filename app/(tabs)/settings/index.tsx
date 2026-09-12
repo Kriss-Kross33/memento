@@ -15,10 +15,13 @@ import {
   Crown,
   SunMoon,
   Archive,
+  RefreshCw,
 } from 'lucide-react-native';
 import { useThemeColors, useThemeMode } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { FREE_OCR_SCANS_PER_MONTH } from '@/constants/monetization';
 import SettingsRow from '@/components/SettingsRow';
 import { currencies, Currency } from '@/utils/currency';
 import { createLocalBackup, restoreLocalBackup } from '@/services/backup';
@@ -26,6 +29,7 @@ import { createLocalBackup, restoreLocalBackup } from '@/services/backup';
 export default function SettingsScreen() {
   const router = useRouter();
   const { receipts, defaultCurrency, setDefaultCurrency, clearAll, reload } = useReceipts();
+  const { hasPro, isLifetime, scanAccess, restore } = useSubscription();
   const { mode, setTheme } = useThemeMode();
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
@@ -39,7 +43,7 @@ export default function SettingsScreen() {
     if (receipts.length === 0) return;
     Alert.alert(
       'Clear All Data',
-      `This permanently deletes ${receipts.length} ${receipts.length === 1 ? 'receipt' : 'receipts'} and their photos from ReceiptSnap. Photos in your device library are not touched. This cannot be undone.`,
+      `This permanently deletes ${receipts.length} ${receipts.length === 1 ? 'receipt' : 'receipts'} and their photos from Memento. Photos in your device library are not touched. This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -52,7 +56,23 @@ export default function SettingsScreen() {
   };
 
   const handleContactSupport = () => {
-    void Linking.openURL('mailto:support@receiptsnap.app?subject=ReceiptSnap%20Support');
+    void Linking.openURL('mailto:support@memento.app?subject=Memento%20Support');
+  };
+
+  const handleRestorePurchases = async () => {
+    try {
+      const next = await restore();
+      if (next.hasPro) {
+        Alert.alert(
+          'Purchases restored',
+          next.isLifetime ? 'Memento Pro Lifetime is active on this device.' : 'Memento Pro is active on this device.'
+        );
+        return;
+      }
+      Alert.alert('No purchases found', 'Nothing to restore on this App Store or Play Store account.');
+    } catch {
+      Alert.alert('Restore failed', 'Try again in a moment.');
+    }
   };
 
   const handleBackup = async () => {
@@ -110,7 +130,7 @@ export default function SettingsScreen() {
         `${restored.receipts} receipts and ${restored.photos} photos were copied onto this device.`
       );
     } catch {
-      Alert.alert('Restore failed', 'That file is not a ReceiptSnap backup.');
+      Alert.alert('Restore failed', 'That file is not a Memento backup.');
     }
   };
 
@@ -192,18 +212,38 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>ReceiptSnap Pro</Text>
+        <Text style={styles.sectionTitle}>Memento Pro</Text>
         <View style={styles.sectionContent}>
           <SettingsRow
-            icon={<Crown size={20} color={Colors.textSecondary} />}
-            title="What Pro will include"
-            subtitle="Core features stay free and offline"
-            onPress={() => router.push('/preview?topic=pro')}
-            rightElement={
-              <View style={styles.soonBadge}>
-                <Text style={styles.soonBadgeText}>Preview</Text>
-              </View>
+            icon={<Crown size={20} color={hasPro ? Colors.primary : Colors.textSecondary} />}
+            title={hasPro ? (isLifetime ? 'Pro Lifetime' : 'Memento Pro') : 'Upgrade to Pro'}
+            subtitle={
+              hasPro
+                ? 'Unlimited scans and advanced export'
+                : scanAccess
+                  ? `${scanAccess.remaining} of ${FREE_OCR_SCANS_PER_MONTH} free scans left this month`
+                  : 'Unlimited scans, PDF export, and organization'
             }
+            onPress={() => router.push(hasPro ? '/paywall?reason=feature' : '/paywall?reason=scans')}
+            rightElement={
+              hasPro ? (
+                <View style={styles.proBadge}>
+                  <Text style={styles.proBadgeText}>{isLifetime ? 'Lifetime' : 'Active'}</Text>
+                </View>
+              ) : (
+                <View style={styles.soonBadge}>
+                  <Text style={styles.soonBadgeText}>Free</Text>
+                </View>
+              )
+            }
+          />
+          <View style={styles.divider} />
+          <SettingsRow
+            icon={<RefreshCw size={20} color={Colors.textSecondary} />}
+            title="Restore Purchases"
+            subtitle="Monthly, yearly, or lifetime Pro"
+            onPress={() => void handleRestorePurchases()}
+            testID="restore-purchases-row"
           />
         </View>
       </View>
@@ -228,7 +268,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon={<Archive size={20} color={Colors.textSecondary} />}
             title="Restore from File"
-            subtitle="Import a ReceiptSnap backup"
+            subtitle="Import a Memento backup"
             onPress={() => void handleRestore()}
           />
           <View style={styles.divider} />
@@ -253,7 +293,7 @@ export default function SettingsScreen() {
         <View style={styles.privacyNote}>
           <Shield size={16} color={Colors.primary} />
           <Text style={styles.privacyNoteText}>
-            All data stays on your device. Uninstalling ReceiptSnap deletes its copy of receipts
+            All data stays on your device. Uninstalling Memento deletes its copy of receipts
             unless you saved a backup file. Photos in your gallery are never deleted.
           </Text>
         </View>
@@ -293,7 +333,7 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>ReceiptSnap</Text>
+        <Text style={styles.footerText}>Memento</Text>
         <Text style={styles.footerVersion}>Private. Simple. Useful.</Text>
       </View>
     </ScrollView>
@@ -359,6 +399,17 @@ const createStyles = (Colors: ThemeColors) =>
     fontSize: 12,
     fontWeight: '500' as const,
     color: Colors.textTertiary,
+  },
+  proBadge: {
+    backgroundColor: Colors.primaryMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  proBadgeText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.primary,
   },
   currencyIcon: {
     fontSize: 15,

@@ -3,6 +3,7 @@ import type { OcrDocument } from '@/services/ocr/types';
 import {
   assessImageQuality,
   choosePreprocessPlan,
+  type CaptureAdvice,
   type CaptureSource,
   type ImageQuality,
   type PreprocessPlan,
@@ -10,8 +11,12 @@ import {
 import { applyPreprocessPlan } from '@/services/ocrPreprocess';
 import { recognizeTextOnImage } from '@/services/ocr';
 import { parseReceiptDocument, scoreOcrResult } from '@/utils/receipt';
-import { RETRY_CONFIDENCE } from '@/utils/receipt/confidence';
+import { attachReview, RETRY_CONFIDENCE } from '@/utils/receipt/confidence';
 import type { ParseFallback, ParsedReceipt } from '@/utils/receipt/types';
+
+export type ReadReceiptOptions = {
+  force?: boolean;
+};
 
 export type ReadReceiptResult = {
   document: OcrDocument | null;
@@ -19,21 +24,25 @@ export type ReadReceiptResult = {
   quality: ImageQuality;
   plan: PreprocessPlan;
   retries: number;
+  skippedReason?: CaptureAdvice;
 };
 
-const emptyParsed = (fallback: ParseFallback): ParsedReceipt => ({
-  merchant: { value: '', confidence: 0, source: 'none' },
-  date: { value: fallback.date, confidence: 0.4, source: 'fallback' },
-  amount: { value: 0, confidence: 0, source: 'none' },
-  currency: { value: fallback.currency, confidence: 0.4, source: 'fallback' },
-  category: { value: 'Other', confidence: 0.4, source: 'fallback' },
-  items: { value: [], confidence: 0, source: 'none' },
-  overallConfidence: 0,
-});
+const emptyParsed = (fallback: ParseFallback): ParsedReceipt =>
+  attachReview({
+    merchant: { value: '', confidence: 0, source: 'none' },
+    date: { value: fallback.date, confidence: 0.4, source: 'fallback' },
+    amount: { value: 0, confidence: 0, source: 'none' },
+    currency: { value: fallback.currency, confidence: 0.4, source: 'fallback' },
+    category: { value: 'Other', confidence: 0.4, source: 'fallback' },
+    items: { value: [], confidence: 0, source: 'none' },
+    validation: { isConsistent: false, score: 0, warnings: [] },
+  });
 
 const forcedUpscale = (quality: ImageQuality): PreprocessPlan => {
-  if (quality.width <= quality.height) return { resizeToWidth: 1600, reason: 'upscale-small' };
-  return { resizeToHeight: 1600, reason: 'upscale-small' };
+  if (quality.width <= quality.height) {
+    return { resizeToWidth: 1600, reason: 'upscale-small', issues: quality.issues };
+  }
+  return { resizeToHeight: 1600, reason: 'upscale-small', issues: quality.issues };
 };
 
 const rank = (document: OcrDocument | null, parsed: ParsedReceipt): number =>
@@ -51,12 +60,23 @@ const isThin = (document: OcrDocument | null, parsed: ParsedReceipt): boolean =>
 export async function readReceipt(
   uri: string,
   fallback: ParseFallback,
-  source: CaptureSource = 'unknown'
+  source: CaptureSource = 'unknown',
+  options: ReadReceiptOptions = {}
 ): Promise<ReadReceiptResult> {
   const quality =
     Platform.OS === 'web' || !uri
-      ? { width: 0, height: 0, minSide: 0, maxSide: 0, source }
+      ? { width: 0, height: 0, minSide: 0, maxSide: 0, source, issues: [], advice: 'ok' as const }
       : await assessImageQuality(uri, source);
+  if (!options.force && quality.advice === 'retake-blur') {
+    return {
+      document: null,
+      parsed: emptyParsed(fallback),
+      quality,
+      plan: { reason: 'none', issues: quality.issues },
+      retries: 0,
+      skippedReason: quality.advice,
+    };
+  }
   const plan = choosePreprocessPlan(quality);
   const prepared = await applyPreprocessPlan(uri, plan);
   let document = await recognizeTextOnImage(
@@ -103,6 +123,8 @@ export async function readReceipt(
       receiptNumber: parsed.receiptNumber?.value,
       notes: parsed.notes?.value,
       overallConfidence: parsed.overallConfidence,
+      reviewState: parsed.reviewState,
+      reviewRequirements: parsed.reviewRequirements.map((requirement) => requirement.field),
       retries,
       items: parsed.items.value.map((item) => ({
         label: item.label,

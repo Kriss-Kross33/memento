@@ -100,8 +100,8 @@ export default function OcrLabScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.lede}>
-        Run the receipt pipeline on a photo. Boxes are OCR lines; scores come from the parser, not ML
-        Kit.
+        Run the receipt pipeline on a photo. Teal is the merchant, red is the total, blue is an item
+        line. Confidence mixes OCR, semantics, geometry, and validation.
       </Text>
       <Button title={uri ? 'Choose another photo' : 'Choose a receipt photo'} onPress={() => void pickPhoto()} />
 
@@ -121,12 +121,27 @@ export default function OcrLabScreen() {
           />
           {lines.map((line, index) => {
             const box = line.boundingBox;
+            const sameBox = (other?: { x: number; y: number; width: number; height: number }) =>
+              !!other &&
+              Math.abs(other.x - box.x) < 2 &&
+              Math.abs(other.y - box.y) < 2 &&
+              Math.abs(other.width - box.width) < 2;
+            const role = sameBox(parsed?.merchant.sourceBox)
+              ? 'merchant'
+              : sameBox(parsed?.amount.sourceBox)
+                ? 'total'
+                  : parsed?.items.value.some((item) => sameBox(item.sourceBox))
+                  ? 'item'
+                  : 'line';
             return (
               <View
                 key={`${index}-${line.text}`}
                 pointerEvents="none"
                 style={[
                   styles.box,
+                  role === 'merchant' && styles.boxMerchant,
+                  role === 'total' && styles.boxTotal,
+                  role === 'item' && styles.boxItem,
                   {
                     left: `${(box.x / imageSize.width) * 100}%`,
                     top: `${(box.y / imageSize.height) * 100}%`,
@@ -150,13 +165,53 @@ export default function OcrLabScreen() {
           <Field label="Category" value={parsed.category.value} confidence={parsed.category.confidence} styles={styles} />
           <Field
             label="Overall"
-            value={formatPct(parsed.overallConfidence)}
+            value={`${formatPct(parsed.overallConfidence)} · ${parsed.reviewState}`}
             confidence={parsed.overallConfidence}
             styles={styles}
           />
           <Text style={styles.meta}>
-            Plan {result?.plan.reason} · retries {result?.retries ?? 0} · {lines.length} lines
+            Review {parsed.reviewRequirements.length === 0 ? 'none' : parsed.reviewRequirements.map((item) => item.field).join(', ')}
           </Text>
+          <Text style={styles.meta}>
+            Plan {result?.plan.reason} · retries {result?.retries ?? 0} · {lines.length} lines
+            {parsed.amount.sourceText ? ` · total from “${parsed.amount.sourceText}”` : ''}
+          </Text>
+        </View>
+      ) : null}
+
+      {result?.quality ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Image quality</Text>
+          <Text style={styles.itemLine}>
+            {result.quality.width}×{result.quality.height} · advice {result.quality.advice}
+          </Text>
+          <Text style={styles.itemLine}>
+            sharpness {result.quality.sharpness?.toFixed(1) ?? '—'} · brightness{' '}
+            {result.quality.brightness?.toFixed(0) ?? '—'} · contrast {result.quality.contrast?.toFixed(0) ?? '—'}
+          </Text>
+          <Text style={styles.itemLine}>
+            glare {result.quality.glare != null ? `${Math.round(result.quality.glare * 100)}%` : '—'} · coverage{' '}
+            {result.quality.coverage != null ? `${Math.round(result.quality.coverage * 100)}%` : '—'} · skew{' '}
+            {result.quality.skew?.toFixed(1) ?? '—'}°
+          </Text>
+          <Text style={styles.meta}>
+            {result.quality.issues.length > 0 ? result.quality.issues.join(', ') : 'No quality issues flagged'}
+          </Text>
+        </View>
+      ) : null}
+
+      {parsed?.validation ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Validation</Text>
+          <Text style={styles.itemLine}>
+            {parsed.validation.isConsistent ? 'Consistent' : 'Needs review'} · score{' '}
+            {formatPct(parsed.validation.score)}
+          </Text>
+          {parsed.validation.warnings.map((warning) => (
+            <Text key={warning.code} style={styles.itemLine}>
+              {warning.message}
+            </Text>
+          ))}
         </View>
       ) : null}
 
@@ -220,8 +275,20 @@ const createStyles = (Colors: ThemeColors) =>
     box: {
       position: 'absolute',
       borderWidth: 1,
-      borderColor: 'rgba(13,148,136,0.85)',
-      backgroundColor: 'rgba(13,148,136,0.12)',
+      borderColor: 'rgba(161,161,170,0.45)',
+      backgroundColor: 'rgba(161,161,170,0.06)',
+    },
+    boxMerchant: {
+      borderColor: 'rgba(13,148,136,0.95)',
+      backgroundColor: 'rgba(13,148,136,0.14)',
+    },
+    boxTotal: {
+      borderColor: 'rgba(220,38,38,0.95)',
+      backgroundColor: 'rgba(220,38,38,0.12)',
+    },
+    boxItem: {
+      borderColor: 'rgba(37,99,235,0.9)',
+      backgroundColor: 'rgba(37,99,235,0.10)',
     },
     card: {
       backgroundColor: Colors.surface,

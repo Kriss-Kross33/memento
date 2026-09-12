@@ -36,7 +36,7 @@ const readBase64 = async (uri: string): Promise<string | null> => {
 };
 
 export const buildBackupFilename = (date = new Date()): string =>
-  `receiptsnap-backup-${date.toISOString().split('T')[0]}.json`;
+  `memento-backup-${date.toISOString().split('T')[0]}.json`;
 
 export const createLocalBackup = async (): Promise<{ filename: string; uri: string; json: string }> => {
   const [receipts, categories] = await Promise.all([

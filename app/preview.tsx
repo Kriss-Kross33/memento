@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Check, CloudOff, Crown } from 'lucide-react-native';
 import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
@@ -26,7 +26,7 @@ const CONTENT: Record<Topic, TopicContent> = {
     eyebrow: 'Cloud Backup',
     title: 'Coming soon',
     paragraphs: [
-      'ReceiptSnap is local-first. Your receipts live on your device, and every feature — scanning, search, insights, export — works fully offline.',
+      'Memento is local-first. Your receipts live on your device, and every feature — scanning, search, insights, export — works fully offline.',
       'When Cloud Backup arrives, it will encrypt your receipts end-to-end and restore them to a new device. It will be optional: an account will unlock backup, never the app itself.',
       'Until then, your data stays entirely on this device. You can export a CSV anytime from Settings → Export Data.',
     ],
@@ -39,29 +39,36 @@ const CONTENT: Record<Topic, TopicContent> = {
     footnote: 'Nothing is uploaded today. This screen describes planned functionality only.',
   },
   pro: {
-    eyebrow: 'ReceiptSnap Pro',
+    eyebrow: 'Memento Pro',
     title: 'Coming soon',
     paragraphs: [
       'Pro is a planned tier for people who manage receipts at scale — more storage power, smarter exports, and time-saving automation.',
-      'Core ReceiptSnap features will always be free: scanning, organizing, search, warranties, and CSV export all work offline with no account.',
+      'Core Memento features will always be free: scanning, organizing, search, warranties, and CSV export all work offline with no account.',
     ],
     points: [
-      'PDF reports and advanced export options',
-      'Receipt scanning with smart suggestions',
-      'Deeper insights and custom categories',
-      'Encrypted cloud backup and device sync',
+      'Unlimited on-device OCR scans',
+      'PDF reports and advanced export',
+      'Custom categories and organization',
+      'Warranty and return tracking',
     ],
-    footnote: 'Not available for purchase yet. No pricing has been set — this is a product preview.',
+    footnote: 'Cloud backup is a future Pro+ feature and is not sold today.',
   },
 };
 
 export default function PreviewScreen() {
   const params = useLocalSearchParams<{ topic?: string }>();
+  const router = useRouter();
   const topic: Topic = params.topic === 'pro' ? 'pro' : 'cloud';
   const content = CONTENT[topic];
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
   const Icon = topic === 'cloud' ? CloudOff : Crown;
+
+  useEffect(() => {
+    if (topic === 'pro') {
+      router.replace('/paywall?reason=feature');
+    }
+  }, [router, topic]);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>

@@ -1,6 +1,6 @@
 import type { OcrDocument, OcrLine } from '@/services/ocr/types';
 import type { LayoutDocument, LayoutLine, LayoutRow } from '@/utils/receipt/types';
-import { sanitizeOcrText } from '@/utils/receipt/vocabulary';
+import { estimateOcrConfidence, sanitizeOcrText } from '@/utils/receipt/vocabulary';
 
 const hasLayout = (lines: OcrLine[]): boolean => {
   const boxed = lines.filter((line) => line.boundingBox.width >= 8 && line.boundingBox.height >= 8);
@@ -36,6 +36,7 @@ export const buildLayout = (source: OcrDocument): LayoutDocument => {
         heightRatio: height > 0 ? box.height / height : 0,
         leftColumnScore: Math.max(0, 1 - normalizedX * 1.2),
         rightColumnScore: Math.max(0, (normalizedX - 0.45) / 0.55),
+        ocrConfidence: line.confidence ?? estimateOcrConfidence(text),
       };
     })
     .filter((line) => line.text.length > 0)

@@ -1,4 +1,5 @@
 import { Platform, Share } from 'react-native';
+import * as Print from 'expo-print';
 import { Receipt } from '@/models/types';
 import { formatMoney } from '@/utils/currency';
 import { buildReceiptsCsv, buildExportFilename } from '@/utils/csv';
@@ -9,7 +10,7 @@ const htmlEscape = (value: string): string =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-export const buildReceiptsHtml = (receipts: Receipt[], title = 'ReceiptSnap export'): string => {
+export const buildReceiptsHtml = (receipts: Receipt[], title = 'Memento export'): string => {
   const rows = receipts
     .map(
       (receipt) => `
@@ -79,8 +80,7 @@ export const shareCsv = async (receipts: Receipt[], filename = buildExportFilena
   await Share.share({ title: filename, message: csv });
 };
 
-export const sharePdf = async (receipts: Receipt[], title = 'ReceiptSnap export'): Promise<void> => {
-  const Print = await import('expo-print');
+export const sharePdf = async (receipts: Receipt[], title = 'Memento export'): Promise<void> => {
   const html = buildReceiptsHtml(receipts, title);
   if (Platform.OS === 'web') {
     await Print.printAsync({ html });

@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "ReceiptSnap",
-    "slug": "receipt-snap",
+    "name": "Memento",
+    "slug": "memento",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "receiptsnap",
+    "scheme": "memento",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -15,9 +15,9 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.receiptsnap.mobile",
+      "bundleIdentifier": "app.memento.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Allow ReceiptSnap to detect and scan receipts."
+        "NSCameraUsageDescription": "Allow Memento to detect and scan receipts."
       }
     },
     "android": {
@@ -25,7 +25,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "app.receiptsnap.mobile"
+      "package": "app.memento.mobile"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -35,13 +35,13 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow ReceiptSnap to scan receipts."
+          "cameraPermission": "Allow Memento to scan receipts."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow ReceiptSnap to import receipt photos."
+          "photosPermission": "Allow Memento to import receipt photos."
         }
       ],
       [
@@ -77,6 +77,13 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "revenueCatIosApiKey": "",
+      "revenueCatAndroidApiKey": "",
+      "revenueCatProEntitlement": "pro",
+      "revenueCatProPlusEntitlement": "pro_plus",
+      "revenueCatDevUnlock": false
     }
   }
 }

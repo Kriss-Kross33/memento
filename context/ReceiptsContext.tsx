@@ -12,6 +12,7 @@ import {
   deleteAllReceiptMedia,
 } from '@/services/receiptMedia';
 import { builtinCategories, buildCustomCategory } from '@/services/categoryRepository';
+import { previousMonth, receiptsInMonth, totalsByCurrency } from '@/utils/insights';
 
 /**
  * ReceiptsProvider — the application layer above the repositories.
@@ -22,6 +23,7 @@ import { builtinCategories, buildCustomCategory } from '@/services/categoryRepos
  * growing document store.
  */
 
+/** Historical key — do not rename or existing installs lose settings. */
 const SETTINGS_KEY = 'receiptsnap_settings';
 
 interface Settings {
@@ -100,7 +102,7 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
 
   /**
    * Creates a receipt. When `mediaSource` is given, the image is copied into
-   * ReceiptSnap's managed storage before the record is saved.
+   * Memento's managed storage before the record is saved.
    */
   const addReceipt = useCallback(
     async (
@@ -221,32 +223,28 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
     });
   }, [settingsMutation, settingsQuery.data]);
 
-  const monthlyTotal = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+  const defaultCurrency = settingsQuery.data?.defaultCurrency ?? DEFAULT_CURRENCY;
 
-    return receipts
-      .filter((r) => {
-        const date = new Date(r.date);
-        return date.getMonth() === currentMonth && date.getFullYear() === currentYear;
-      })
-      .reduce((sum, r) => sum + r.amount, 0);
-  }, [receipts]);
+  const monthlyTotals = useMemo(
+    () => totalsByCurrency(receiptsInMonth(receipts)),
+    [receipts]
+  );
 
-  const lastMonthTotal = useMemo(() => {
-    const now = new Date();
-    const lastMonth = now.getMonth() - 1;
-    const year = lastMonth < 0 ? now.getFullYear() - 1 : now.getFullYear();
-    const month = lastMonth < 0 ? 11 : lastMonth;
+  const lastMonthTotals = useMemo(
+    () => totalsByCurrency(receiptsInMonth(receipts, previousMonth())),
+    [receipts]
+  );
 
-    return receipts
-      .filter((r) => {
-        const date = new Date(r.date);
-        return date.getMonth() === month && date.getFullYear() === year;
-      })
-      .reduce((sum, r) => sum + r.amount, 0);
-  }, [receipts]);
+  /** Default-currency month total only — never mix dollars into cedis. */
+  const monthlyTotal = useMemo(
+    () => monthlyTotals.find((entry) => entry.currency === defaultCurrency)?.total ?? 0,
+    [monthlyTotals, defaultCurrency]
+  );
+
+  const lastMonthTotal = useMemo(
+    () => lastMonthTotals.find((entry) => entry.currency === defaultCurrency)?.total ?? 0,
+    [lastMonthTotals, defaultCurrency]
+  );
 
   const percentChange = useMemo(() => {
     if (lastMonthTotal === 0) return 0;
@@ -268,8 +266,10 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
     removeCustomCategory,
     monthlyTotal,
     lastMonthTotal,
+    monthlyTotals,
+    lastMonthTotals,
     percentChange,
-    defaultCurrency: settingsQuery.data?.defaultCurrency ?? DEFAULT_CURRENCY,
+    defaultCurrency,
     setDefaultCurrency,
     hasOnboarded: settingsQuery.data?.hasOnboarded ?? false,
     isSettingsLoaded: !settingsQuery.isPending,

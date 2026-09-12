@@ -5,6 +5,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@internal/purchases": [
+        "./packages/purchases/src/index.ts"
       ]
     }
   },

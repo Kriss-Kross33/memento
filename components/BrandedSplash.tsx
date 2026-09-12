@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const ICON = require('../assets/images/splash-icon.png');
 const SPLASH_BG = '#10151F';
 
-const APP_NAME = Constants.expoConfig?.name ?? 'ReceiptSnap';
+const APP_NAME = Constants.expoConfig?.name ?? 'Memento';
 const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
 
 /**

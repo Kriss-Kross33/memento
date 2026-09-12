@@ -69,11 +69,14 @@ export const pickMerchantCandidate = (layout: LayoutDocument) => {
         confidence: 0.94,
         categoryHint: merchant.category,
         source: source?.text ?? merchant.name,
+        line: source ?? undefined,
       };
     }
   }
 
-  if (candidates.length === 0) return { value: '', confidence: 0.2, categoryHint: undefined, source: 'none' };
+  if (candidates.length === 0) {
+    return { value: '', confidence: 0.2, categoryHint: undefined, source: 'none', line: undefined };
+  }
   const branded = candidates.find((line) => /^(kfc|walmart)\b/i.test(line.text.trim()));
   const chosen = branded ?? candidates[0];
 
@@ -84,8 +87,14 @@ export const pickMerchantCandidate = (layout: LayoutDocument) => {
     if (score >= 0.68) {
       confidence = Math.max(confidence, Math.min(0.98, score));
       matchedCategory = merchant.category;
-      return { value: merchant.name, confidence, categoryHint: matchedCategory, source: chosen.text };
+      return { value: merchant.name, confidence, categoryHint: matchedCategory, source: chosen.text, line: chosen };
     }
   }
-  return { value: chosen.text.replace(/\s+/g, ' ').trim(), confidence, categoryHint: matchedCategory, source: chosen.text };
+  return {
+    value: chosen.text.replace(/\s+/g, ' ').trim(),
+    confidence,
+    categoryHint: matchedCategory,
+    source: chosen.text,
+    line: chosen,
+  };
 };

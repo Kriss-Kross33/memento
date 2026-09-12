@@ -17,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
+import { useSubscription } from '@/context/SubscriptionContext';
 import Button from '@/components/Button';
 import { toISODate } from '@/components/DatePickerField';
 import type { CaptureSource } from '@/services/ocr';
@@ -28,6 +29,7 @@ import { importReceiptImage } from '@/services/receiptMedia';
 export default function ScanScreen() {
   const router = useRouter();
   const { addReceipt, defaultCurrency } = useReceipts();
+  const { requestScan, consumeScan } = useSubscription();
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [flash, setFlash] = useState(false);
@@ -73,28 +75,38 @@ export default function ScanScreen() {
     notes: '',
   });
 
-  const receiptFromImage = async (uri: string, source: CaptureSource = 'unknown') => {
+  const receiptFromImage = async (
+    uri: string,
+    source: CaptureSource = 'unknown',
+    force = false
+  ) => {
     const blank = emptyReceipt();
-    const { document, parsed } = await readReceipt(
+    const { document, parsed, skippedReason } = await readReceipt(
       uri,
       { date: blank.date, currency: blank.currency },
-      source
+      source,
+      { force }
     );
+    if (skippedReason === 'retake-blur' && !force) {
+      return { skippedReason, fields: { ...blank, ocr: buildOcrMetadata(null, false) } };
+    }
     if (!document) {
       if (__DEV__) console.log('[ocr] parsed: skipped (no ocr result)');
-      return { ...blank, ocr: buildOcrMetadata(null, false) };
+      return { fields: { ...blank, ocr: buildOcrMetadata(null, false) } };
     }
     return {
-      ...blank,
-      merchant: parsed.merchant.value,
-      date: parsed.date.value,
-      amount: parsed.amount.value,
-      currency: parsed.currency.value,
-      category: parsed.category.value,
-      receiptNumber: parsed.receiptNumber?.value,
-      notes: parsed.notes?.value ?? '',
-      items: parsed.items.value,
-      ocr: buildOcrMetadata(parsed, true),
+      fields: {
+        ...blank,
+        merchant: parsed.merchant.value,
+        date: parsed.date.value,
+        amount: parsed.amount.value,
+        currency: parsed.currency.value,
+        category: parsed.category.value,
+        receiptNumber: parsed.receiptNumber?.value,
+        notes: parsed.notes?.value ?? '',
+        items: parsed.items.value,
+        ocr: buildOcrMetadata(parsed, true),
+      },
     };
   };
 
@@ -102,16 +114,45 @@ export default function ScanScreen() {
     router.push(`/receipt/${id}?scanned=1`, { withAnchor: true });
   };
 
+  const openPaywall = () => {
+    router.push('/paywall?reason=scans');
+  };
+
+  const ensureScanAllowed = async (): Promise<boolean> => {
+    const allowed = await requestScan();
+    if (allowed) return true;
+    openPaywall();
+    return false;
+  };
+
   const saveScannedImage = async (
     uri: string,
     mediaSource: 'camera' | 'library',
-    ocrSource: CaptureSource = mediaSource
+    ocrSource: CaptureSource = mediaSource,
+    force = false
   ) => {
+    if (!(await ensureScanAllowed())) return;
     setIsProcessing(true);
     try {
       const media = await importReceiptImage(uri, mediaSource);
-      const fields = await receiptFromImage(media.uri, ocrSource);
-      const id = await addReceipt({ ...fields, media });
+      const result = await receiptFromImage(media.uri, ocrSource, force);
+      if (result.skippedReason === 'retake-blur') {
+        setIsProcessing(false);
+        Alert.alert(
+          'Photo is too blurry',
+          'A steadier shot will read more accurately. You can still scan this photo if you want.',
+          [
+            { text: 'Retake', style: 'cancel' },
+            {
+              text: 'Scan anyway',
+              onPress: () => void saveScannedImage(uri, mediaSource, ocrSource, true),
+            },
+          ]
+        );
+        return;
+      }
+      const id = await addReceipt({ ...result.fields, media });
+      await consumeScan();
       openReview(id);
     } catch (error) {
       console.warn('[scan] save failed', error);
@@ -127,6 +168,7 @@ export default function ScanScreen() {
 
   const handleDetectReceipt = async () => {
     if (isCapturing || isProcessing) return;
+    if (!(await ensureScanAllowed())) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
     let uri: string | null = null;
     try {
@@ -153,6 +195,7 @@ export default function ScanScreen() {
   /** Captures a photo, saves a managed copy, then opens the review screen. */
   const handleCapture = async () => {
     if (isCapturing || isProcessing) return;
+    if (Platform.OS !== 'web' && !(await ensureScanAllowed())) return;
 
     setIsCapturing(true);
     animateCapture();
@@ -193,6 +236,7 @@ export default function ScanScreen() {
   /** Imports an existing photo from the user's library as a managed copy. */
   const handleLibraryImport = async () => {
     if (isCapturing || isProcessing) return;
+    if (!(await ensureScanAllowed())) return;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -287,7 +331,7 @@ export default function ScanScreen() {
           </View>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionText}>
-            ReceiptSnap needs camera access to scan your receipts. Photos are copied into the app and
+            Memento needs camera access to scan your receipts. Photos are copied into the app and
             never leave your device.
           </Text>
           <Button

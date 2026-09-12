@@ -53,7 +53,7 @@ const SLIDES: Slide[] = [
     kind: 'photo',
     image: PHOTO_PURCHASE,
     title: 'Your receipts stay yours.',
-    body: 'ReceiptSnap is local-first. Your receipts stay on your device unless you choose to back them up.',
+    body: 'Memento is local-first. Your receipts stay on your device unless you choose to back them up.',
     points: ['Stored on this device', 'No account required', 'Backup only if you choose'],
   },
 ];
@@ -306,7 +306,7 @@ export default function Onboarding() {
   const slide = SLIDES[index];
   const isPhoto = slide.kind === 'photo';
   const isLast = index === LAST;
-  const ctaTitle = isLast ? 'Start using ReceiptSnap' : index === 0 ? 'Get Started' : 'Continue';
+  const ctaTitle = isLast ? 'Start using Memento' : index === 0 ? 'Get Started' : 'Continue';
   const page = Math.max(pagerSize.width, 1);
 
   const photoMix = scrollX.interpolate({

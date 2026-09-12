@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import type { OcrDocument, OcrResult } from '@/services/ocr/types';
-import { mlkitRecognizer } from '@/services/ocr/textRecognizer';
+import { getTextRecognizer } from '@/services/ocr/engine';
 import {
   assessImageQuality,
   choosePreprocessPlan,
@@ -11,6 +11,8 @@ import { scoreOcrResult } from '@/utils/receipt';
 
 export type { OcrBox, OcrBlock, OcrDocument, OcrElement, OcrLine, OcrResult } from '@/services/ocr/types';
 export type { CaptureSource } from '@/services/ocr/imageQuality';
+export { getTextRecognizer } from '@/services/ocr/engine';
+export type { TextRecognizer } from '@/services/ocr/textRecognizer';
 
 const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<string, unknown>) => {
   if (!__DEV__) return;
@@ -40,7 +42,7 @@ const logOcrDump = (label: string, result: OcrResult | null, extra?: Record<stri
 export async function recognizeTextOnImage(uri: string, label = 'pass'): Promise<OcrDocument | null> {
   if (Platform.OS === 'web' || !uri) return null;
   try {
-    const result = await mlkitRecognizer.recognize(uri);
+    const result = await getTextRecognizer().recognize(uri);
     if (__DEV__) {
       console.log(`[ocr] ${label} mlkit raw`, {
         uri,

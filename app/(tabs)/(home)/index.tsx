@@ -16,17 +16,24 @@ import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { consumeFreshEntrance } from '@/utils/freshEntrance';
 import { useReceipts } from '@/context/ReceiptsContext';
-import { formatMoney } from '@/utils/currency';
 import { urgentProtection } from '@/utils/protection';
+import {
+  currencyTrend,
+  pickDisplayCurrency,
+  receiptsInMonth,
+  sortCurrencyTotals,
+  totalsByCurrency,
+} from '@/utils/insights';
 import ReceiptRow from '@/components/ReceiptRow';
 import SectionHeader from '@/components/SectionHeader';
 import EmptyState from '@/components/EmptyState';
+import CurrencyTotals from '@/components/CurrencyTotals';
 
 const RECENT_LIMIT = 5;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { receipts, monthlyTotal, lastMonthTotal, percentChange, isLoading } = useReceipts();
+  const { receipts, defaultCurrency, isLoading } = useReceipts();
   const [refreshing, setRefreshing] = React.useState(false);
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
@@ -77,12 +84,20 @@ export default function HomeScreen() {
   const monthLabel = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleDateString('en-US', { month: 'long' });
 
-  // Trend is only meaningful with data from the previous month.
-  const showTrend = lastMonthTotal > 0 && percentChange !== 0;
-  const trendUp = percentChange > 0;
+  const monthlyTotals = useMemo(
+    () => sortCurrencyTotals(totalsByCurrency(receiptsInMonth(receipts)), defaultCurrency),
+    [receipts, defaultCurrency]
+  );
+  const trendCurrency = pickDisplayCurrency(monthlyTotals, defaultCurrency);
+  const trend = trendCurrency
+    ? currencyTrend(receipts, trendCurrency)
+    : { previous: 0, percent: 0, current: 0 };
+  const showTrend = trend.previous > 0 && trend.percent !== 0;
+  const trendUp = trend.percent > 0;
   const recentReceipts = receipts.slice(0, RECENT_LIMIT);
   const isEmpty = !isLoading && receipts.length === 0;
   const reminder = urgentProtection(receipts)[0];
+  const isMixedCurrency = monthlyTotals.length > 1;
 
   return (
     <ScrollView
@@ -95,9 +110,10 @@ export default function HomeScreen() {
     >
       <Animated.View style={[styles.hero, entranceStyle(entrance[0])]}>
         <Text style={styles.monthLabel}>{monthLabel.toUpperCase()}</Text>
-        <Text style={styles.total} testID="monthly-total">
-          {formatMoney(monthlyTotal)}
-        </Text>
+        <CurrencyTotals totals={monthlyTotals} testID="monthly-total" />
+        {isMixedCurrency ? (
+          <Text style={styles.mixedNote}>Currencies are kept separate and never added together.</Text>
+        ) : null}
         {showTrend ? (
           <View style={styles.trendRow}>
             {trendUp ? (
@@ -106,7 +122,8 @@ export default function HomeScreen() {
               <TrendingDown size={15} color={Colors.income} />
             )}
             <Text style={[styles.trendText, trendUp ? styles.trendUp : styles.trendDown]}>
-              {Math.abs(percentChange).toFixed(1)}% vs {lastMonthName}
+              {Math.abs(trend.percent).toFixed(1)}% vs {lastMonthName}
+              {trendCurrency ? ` · ${trendCurrency}` : ''}
             </Text>
           </View>
         ) : null}
@@ -252,12 +269,11 @@ const createStyles = (Colors: ThemeColors) =>
     letterSpacing: 0.6,
     marginBottom: 6,
   },
-  total: {
-    fontSize: 40,
-    fontWeight: '700' as const,
-    color: Colors.text,
-    letterSpacing: -1,
-    fontVariant: ['tabular-nums'],
+  mixedNote: {
+    fontSize: 13,
+    color: Colors.textTertiary,
+    marginTop: 8,
+    lineHeight: 18,
   },
   trendRow: {
     flexDirection: 'row',

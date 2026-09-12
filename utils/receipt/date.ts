@@ -70,8 +70,8 @@ export const pickDateCandidate = (layout: LayoutDocument, fallback: string) => {
     const date = parseDateFromText(line.text);
     if (date) {
       const topBoost = line.normalizedY <= 0.6 ? 0.15 : 0;
-      return { value: date, confidence: Math.min(0.98, 0.78 + topBoost), source: line.text };
+      return { value: date, confidence: Math.min(0.98, 0.78 + topBoost), source: line.text, line };
     }
   }
-  return { value: fallback, confidence: 0.5, source: 'fallback' };
+  return { value: fallback, confidence: 0.5, source: 'fallback', line: undefined };
 };

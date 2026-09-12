@@ -8,11 +8,13 @@ export type OcrBox = {
 export type OcrElement = {
   text: string;
   boundingBox: OcrBox;
+  confidence?: number;
 };
 
 export type OcrLine = {
   text: string;
   boundingBox: OcrBox;
+  confidence?: number;
   elements?: OcrElement[];
 };
 

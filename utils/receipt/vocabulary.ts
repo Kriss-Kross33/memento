@@ -1,3 +1,7 @@
+/**
+ * OCR normalization layer — not the parser's primary intelligence.
+ * Semantic matching happens after this, then geometry and context.
+ */
 export const OCR_WORD_FIXES: [RegExp, string][] = [
   [/\breveipt\b/gi, 'Receipt'],
   [/\bpald\b/gi, 'Paid'],
@@ -28,7 +32,18 @@ export const OCR_WORD_FIXES: [RegExp, string][] = [
   [/walmart\s*>/gi, 'Walmart'],
 ];
 
-export const TOTAL_TERMS = ['total', 'grand total', 'amount due', 'amount paid', 'total due', 'total purchase'];
+const OCR_TOKEN_CORRECTIONS: Record<string, string> = {
+  totgl: 'total',
+  anount: 'amount',
+  balunce: 'balance',
+  casi: 'cash',
+  pald: 'paid',
+  crieck: 'check',
+  criek: 'check',
+  dct: 'oct',
+};
+
+export const TOTAL_TERMS = ['grand total', 'amount due', 'total due', 'net payable', 'amount paid', 'total purchase', 'total'];
 export const SUBTOTAL_TERMS = ['subtotal', 'sub total', 'sub-total'];
 export const TAX_TERMS = ['tax', 'vat', 'gst', 'nhil', 'levy', 'getfund'];
 export const PAYMENT_TERMS = ['payment', 'cash', 'card', 'visa', 'mastercard', 'momo', 'tendered'];
@@ -52,6 +67,39 @@ export const HEADER_NOISE_TERMS = [
   'feedback',
   'survey',
 ];
+
+export type TermMatchMethod = 'exact' | 'correction' | 'fuzzy';
+
+export type TermMatch = {
+  term: string;
+  method: TermMatchMethod;
+  score: number;
+};
+
+const TERM_THRESHOLDS: Record<string, number> = {
+  total: 0.84,
+  'grand total': 0.84,
+  'amount due': 0.84,
+  'total due': 0.84,
+  'net payable': 0.84,
+  subtotal: 0.84,
+  'sub total': 0.84,
+  tax: 0.9,
+  vat: 0.9,
+  gst: 0.9,
+  cash: 0.88,
+  card: 0.88,
+  change: 0.86,
+};
+
+export const termThreshold = (term: string): number => {
+  const key = normalize(term);
+  if (TERM_THRESHOLDS[key] != null) return TERM_THRESHOLDS[key];
+  const length = key.replace(/\s/g, '').length;
+  if (length <= 3) return 0.9;
+  if (length === 4) return 0.88;
+  return 0.82;
+};
 
 const normalize = (value: string): string =>
   value
@@ -82,33 +130,113 @@ export const similarity = (a: string, b: string): number => {
   return 1 - levenshtein(na, nb) / max;
 };
 
-const tokenIsTerm = (tokens: string[], term: string, index: number): boolean => {
-  if (tokens[index] !== term) return false;
-  // "sub total" should not count as the standalone term "total".
-  if (term === 'total' && tokens[index - 1] === 'sub') return false;
+const correctToken = (token: string): string => OCR_TOKEN_CORRECTIONS[token] ?? token;
+
+const windowMatches = (tokens: string[], termTokens: string[]): boolean => {
+  if (termTokens.length === 0) return false;
+  for (let i = 0; i <= tokens.length - termTokens.length; i++) {
+    if (termTokens.every((term, offset) => tokens[i + offset] === term)) {
+      if (termTokens[0] === 'total' && tokens[i - 1] === 'sub') continue;
+      return true;
+    }
+  }
+  return false;
+};
+
+/** Staged match: exact → common OCR correction → fuzzy with term-specific thresholds. */
+export const matchTerms = (text: string, terms: string[]): TermMatch | null => {
+  const value = normalize(text);
+  if (!value) return null;
+  const rawTokens = value.split(' ').filter(Boolean);
+  const correctedTokens = rawTokens.map(correctToken);
+  const correctedValue = correctedTokens.join(' ');
+
+  let best: TermMatch | null = null;
+  const consider = (match: TermMatch) => {
+    if (!best || match.score > best.score || (match.score === best.score && match.method !== 'fuzzy')) {
+      best = match;
+    }
+  };
+
+  for (const term of terms) {
+    const termNorm = normalize(term);
+    const termTokens = termNorm.split(' ').filter(Boolean);
+    const threshold = termThreshold(termNorm);
+
+    const exactRaw =
+      termTokens.length > 1 ? value.includes(termNorm) || windowMatches(rawTokens, termTokens) : windowMatches(rawTokens, termTokens);
+    if (exactRaw) {
+      consider({ term: termNorm, method: 'exact', score: 1 });
+      continue;
+    }
+    const exactCorrected =
+      termTokens.length > 1
+        ? correctedValue.includes(termNorm) || windowMatches(correctedTokens, termTokens)
+        : windowMatches(correctedTokens, termTokens);
+    if (exactCorrected) {
+      consider({ term: termNorm, method: 'correction', score: 0.96 });
+      continue;
+    }
+
+    const whole = Math.max(similarity(value, termNorm), similarity(correctedValue, termNorm));
+    if (whole >= threshold) {
+      consider({ term: termNorm, method: 'fuzzy', score: whole });
+      continue;
+    }
+    const tokenScore = Math.max(
+      ...rawTokens.map((token) => (token === 'subtotal' ? 0 : similarity(token, termNorm))),
+      ...correctedTokens.map((token) => (token === 'subtotal' ? 0 : similarity(token, termNorm))),
+      0
+    );
+    if (tokenScore >= threshold) {
+      consider({ term: termNorm, method: 'fuzzy', score: tokenScore });
+    }
+  }
+
+  return best;
+};
+
+export const fuzzyHasTerm = (text: string, terms: string[], threshold?: number): boolean => {
+  const match = matchTerms(text, terms);
+  if (!match) return false;
+  if (threshold != null && match.score < threshold) return false;
   return true;
 };
 
-export const fuzzyHasTerm = (text: string, terms: string[], threshold = 0.76): boolean => {
+/** Counts / tax / discount "totals" are not the payable receipt total. */
+export const isNonPayableTotal = (text: string): boolean =>
+  /\btotal\s*(items?|qty|quantity|sold|tax|vat|discount|savings?|tender)\b/i.test(text);
+
+/**
+ * A payable TOTAL label. Fuzzy-only "total" is not enough — short OCR
+ * garbage must not become the receipt total by itself.
+ */
+export const isStrongTotalLabel = (text: string): boolean => {
+  if (isNonPayableTotal(text)) return false;
+  const match = matchTerms(text, TOTAL_TERMS);
+  if (!match) return false;
+  if (match.term === 'total' && match.method === 'fuzzy') return false;
+  return true;
+};
+
+export const totalLabelRank = (text: string): number => {
+  if (!isStrongTotalLabel(text)) return 0;
   const value = normalize(text);
-  if (!value) return false;
-  const tokens = value.split(' ').filter(Boolean);
-  for (const term of terms) {
-    const termNorm = normalize(term);
-    const termTokens = termNorm.split(' ');
-    if (termTokens.length > 1) {
-      if (value.includes(termNorm)) return true;
-    } else if (tokens.some((_, index) => tokenIsTerm(tokens, termNorm, index))) {
-      return true;
-    }
-    if (similarity(value, termNorm) >= threshold) return true;
-    if (tokens.some((token) => token !== 'subtotal' && similarity(token, termNorm) >= threshold)) return true;
-  }
-  return false;
+  if (value.includes('grand total')) return 100;
+  if (/(amount due|total due|balance due)/.test(value)) return 92;
+  if (/(net payable|amount payable)/.test(value)) return 88;
+  if (/(total purchase|amount paid)/.test(value)) return 72;
+  return 50;
 };
 
 export const sanitizeOcrText = (text: string): string => {
   let next = text.replace(/(\d)\.\(/g, '$1.').replace(/(\d)[oO](\d)/g, '$10$2');
   for (const [from, to] of OCR_WORD_FIXES) next = next.replace(from, to);
   return next.replace(/\s+/g, ' ').trim();
+};
+
+export const estimateOcrConfidence = (text: string): number => {
+  if (!text) return 0;
+  const weird = (text.match(/[^a-zA-Z0-9.,:%$#£€₵/()\-\s@']/g) ?? []).length;
+  return Math.max(0.35, 1 - weird / text.length);
 };

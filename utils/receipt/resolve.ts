@@ -5,17 +5,21 @@ import { pickDateCandidate } from '@/utils/receipt/date';
 import { pickMerchantCandidate, isEcgReceipt } from '@/utils/receipt/merchant';
 import { deriveRegions, findAnchors } from '@/utils/receipt/anchors';
 import { pickCurrencyCandidate, guessCategoryCandidate } from '@/utils/receipt/currency';
+import { validateReceipt } from '@/utils/receipt/validate';
+import { attachReview } from '@/utils/receipt/confidence';
+import { blendOcrConfidence, extracted } from '@/utils/receipt/field';
 
 const pickTotal = (
   layout: LayoutDocument,
   totalsMin: number,
-  totalsMax: number
-): { value: number; confidence: number; source: string } => {
-  const amounts = extractAmountCandidates(layout).filter(
+  totalsMax: number,
+  amounts = extractAmountCandidates(layout)
+): { value: number; confidence: number; source: string; lineIndex?: number } => {
+  const region = amounts.filter(
     (candidate) => candidate.lineIndex >= totalsMin && candidate.lineIndex <= totalsMax + 1
   );
-  if (amounts.length === 0) return { value: 0, confidence: 0.2, source: 'none' };
-  const scored = amounts
+  if (region.length === 0) return { value: 0, confidence: 0.2, source: 'none' };
+  const scored = region
     .filter((candidate) => !/%/.test(candidate.text) || candidate.roleScores.total >= 0.8)
     .map((candidate) => ({
       ...candidate,
@@ -27,13 +31,14 @@ const pickTotal = (
         candidate.roleScores.cash * 0.25,
     }))
     .sort((a, b) => b.score - a.score || b.value - a.value || b.lineIndex - a.lineIndex);
-  const labeled = scored.filter((candidate) => candidate.roleScores.total >= 0.8);
+  const labeled = scored.filter((candidate) => candidate.roleScores.total >= 0.72);
   const chosen = labeled[0] ?? scored[0];
   if (!chosen) return { value: 0, confidence: 0.2, source: 'none' };
   return {
     value: chosen.value,
     confidence: Math.min(0.99, Math.max(0.2, chosen.score)),
     source: chosen.text,
+    lineIndex: chosen.lineIndex,
   };
 };
 
@@ -67,11 +72,14 @@ export const resolveReceipt = (
 ): ParsedReceipt => {
   const anchors = findAnchors(layout);
   const regions = deriveRegions(layout, anchors);
+  const amounts = extractAmountCandidates(layout, anchors, regions);
   const fullText = layout.lines.map((line) => line.text).join('\n');
 
   const merchantCandidate = pickMerchantCandidate(layout);
   const dateCandidate = pickDateCandidate(layout, fallback.date);
-  const totalCandidate = pickTotal(layout, regions.totalsMinLineIndex, regions.totalsMaxLineIndex);
+  const totalCandidate = pickTotal(layout, regions.totalsMinLineIndex, regions.totalsMaxLineIndex, amounts);
+  const totalLine =
+    totalCandidate.lineIndex != null ? layout.lines.find((line) => line.index === totalCandidate.lineIndex) : undefined;
   const currencyCandidate = pickCurrencyCandidate(layout, merchantCandidate.value, fallback.currency);
   const categoryCandidate = isEcgReceipt(fullText)
     ? { value: 'Utilities', confidence: 0.95, source: 'ecg-signature' }
@@ -79,32 +87,48 @@ export const resolveReceipt = (
   const itemsCandidate = parseItems(layout, totalCandidate.value, regions.itemMaxLineIndex);
   const receiptNumber = parseReceiptNumber(fullText, layout.lines.map((line) => line.text));
   const notes = buildNotes(receiptNumber.value);
+  const receiptNumberLine = receiptNumber.source
+    ? layout.lines.find((line) => line.text.includes(receiptNumber.source) || receiptNumber.source.includes(line.text))
+    : undefined;
 
-  const confidenceValues = [
-    merchantCandidate.confidence,
-    dateCandidate.confidence,
-    totalCandidate.confidence,
-    currencyCandidate.confidence,
-    categoryCandidate.confidence,
-    itemsCandidate.confidence,
-  ];
-  const overallConfidence = Number(
-    (confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length).toFixed(3)
+  const merchant = extracted(
+    merchantCandidate.value,
+    blendOcrConfidence(merchantCandidate.confidence, merchantCandidate.line),
+    merchantCandidate.line,
+    merchantCandidate.source
   );
+  const date = extracted(
+    dateCandidate.value,
+    blendOcrConfidence(dateCandidate.confidence, dateCandidate.line),
+    dateCandidate.line,
+    dateCandidate.source
+  );
+  const amount = extracted(
+    totalCandidate.value,
+    blendOcrConfidence(totalCandidate.confidence, totalLine),
+    totalLine,
+    totalCandidate.source
+  );
+  const currency = extracted(currencyCandidate.value, currencyCandidate.confidence, undefined, currencyCandidate.source);
+  const category = extracted(categoryCandidate.value, categoryCandidate.confidence, undefined, categoryCandidate.source);
+  const items = extracted(itemsCandidate.items, itemsCandidate.confidence, undefined, 'item-matcher');
+  const validation = validateReceipt({
+    total: amount.value,
+    items: items.value,
+    amounts,
+  });
 
-  return {
-    merchant: { value: merchantCandidate.value, confidence: merchantCandidate.confidence, source: merchantCandidate.source },
-    date: { value: dateCandidate.value, confidence: dateCandidate.confidence, source: dateCandidate.source },
-    amount: { value: totalCandidate.value, confidence: totalCandidate.confidence, source: totalCandidate.source },
-    currency: { value: currencyCandidate.value, confidence: currencyCandidate.confidence, source: currencyCandidate.source },
-    category: { value: categoryCandidate.value, confidence: categoryCandidate.confidence, source: categoryCandidate.source },
-    receiptNumber: { value: receiptNumber.value, confidence: receiptNumber.confidence, source: receiptNumber.source },
-    notes: { value: notes, confidence: notes ? 0.8 : 0.4, source: notes ? 'receipt-number' : 'none' },
-    items: {
-      value: itemsCandidate.items,
-      confidence: itemsCandidate.confidence,
-      source: 'item-matcher',
-    },
-    overallConfidence,
+  const parsed = {
+    merchant,
+    date,
+    amount,
+    currency,
+    category,
+    receiptNumber: extracted(receiptNumber.value, receiptNumber.confidence, receiptNumberLine, receiptNumber.source),
+    notes: extracted(notes, notes ? 0.8 : 0.4, receiptNumberLine, notes ? 'receipt-number' : 'none'),
+    items,
+    validation,
   };
+
+  return attachReview(parsed);
 };

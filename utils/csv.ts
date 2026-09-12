@@ -52,4 +52,4 @@ export const buildReceiptsCsv = (receipts: Receipt[]): string => {
 
 /** Suggested export filename, e.g. receipts-2026-09-11.csv */
 export const buildExportFilename = (date = new Date()): string =>
-  `receiptsnap-receipts-${date.toISOString().split('T')[0]}.csv`;
+  `memento-receipts-${date.toISOString().split('T')[0]}.csv`;

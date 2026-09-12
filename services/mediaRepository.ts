@@ -10,7 +10,7 @@ import {
 /**
  * MediaRepository — receipt images as first-class records.
  *
- * Files live in ReceiptSnap-managed app storage (see receiptMedia.ts); the
+ * Files live in Memento-managed app storage (see receiptMedia.ts); the
  * repository owns the database records pointing at them. Receipt metadata is
  * independent from the image: deleting or losing a file never deletes the
  * receipt, and the UI degrades to "Receipt image unavailable".

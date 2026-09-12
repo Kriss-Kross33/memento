@@ -12,9 +12,13 @@ import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import CategoryIcon from '@/components/CategoryIcon';
 import { useReceipts } from '@/context/ReceiptsContext';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { useRouter } from 'expo-router';
 
 export default function CategoriesScreen() {
   const { receipts, categories, addCustomCategory, removeCustomCategory } = useReceipts();
+  const { hasPro } = useSubscription();
+  const router = useRouter();
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
   const [draft, setDraft] = useState('');
@@ -27,6 +31,10 @@ export default function CategoriesScreen() {
     if (!name) return;
     if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
       Alert.alert('Category exists', 'Choose a different name.');
+      return;
+    }
+    if (!hasPro) {
+      router.push('/paywall?reason=categories');
       return;
     }
     await addCustomCategory(name);

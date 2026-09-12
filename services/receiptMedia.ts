@@ -6,7 +6,7 @@ import { ReceiptMedia } from '@/models/types';
 /**
  * Managed receipt media storage.
  *
- * Receipt images are always copied into ReceiptSnap's private document
+ * Receipt images are always copied into Memento's private document
  * directory. We never reference the user's original Photos/Gallery URI, so
  * deleting the original photo can never break a saved receipt.
  */
@@ -102,7 +102,7 @@ const deleteIfManaged = async (uri?: string): Promise<void> => {
 };
 
 /**
- * Deletes ReceiptSnap-managed files for a receipt's media. Original photos in
+ * Deletes Memento-managed files for a receipt's media. Original photos in
  * the user's gallery are never touched. Safe to call repeatedly.
  */
 export const deleteReceiptMedia = async (media?: ReceiptMedia | null): Promise<void> => {

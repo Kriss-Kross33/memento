@@ -1,7 +1,7 @@
 import { Currency } from '@/utils/currency';
 
 /**
- * ReceiptSnap domain model.
+ * Memento domain model.
  *
  * These types describe the domain independently of how data is persisted.
  * Sync-related fields exist so a future sync engine can adopt the local
@@ -31,10 +31,12 @@ export interface ReceiptItem {
   total?: number;
   /** Present on freshly parsed items; not persisted per line. */
   confidence?: number;
+  sourceLineIndex?: number;
+  sourceBox?: { x: number; y: number; width: number; height: number };
 }
 
 /**
- * Managed receipt media. `uri` always points at ReceiptSnap's own app storage
+ * Managed receipt media. `uri` always points at Memento's own app storage
  * (a private copy), never at the user's original Photos/Gallery asset.
  */
 export interface ReceiptMedia {

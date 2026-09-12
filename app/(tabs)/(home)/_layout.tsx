@@ -24,7 +24,7 @@ export default function HomeLayout() {
       <Stack.Screen
         name="index"
         options={{
-          headerTitle: "ReceiptSnap",
+          headerTitle: "Memento",
         }}
       />
     </Stack>

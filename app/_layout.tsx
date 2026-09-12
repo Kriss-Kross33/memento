@@ -8,6 +8,7 @@ import { View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ReceiptsProvider, useReceipts } from "@/context/ReceiptsContext";
+import { SubscriptionProvider } from "@/context/SubscriptionContext";
 import {
   ThemeProvider,
   useThemeColors,
@@ -111,6 +112,14 @@ function RootLayoutNav() {
           }}
         />
         <Stack.Screen
+          name="paywall"
+          options={{
+            presentation: "modal",
+            headerTitle: "Memento Pro",
+            headerTintColor: Colors.text,
+          }}
+        />
+        <Stack.Screen
           name="protection"
           options={{
             presentation: "card",
@@ -139,9 +148,11 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
           <ThemeProvider>
-            <ReceiptsProvider>
-              <RootLayoutNav />
-            </ReceiptsProvider>
+            <SubscriptionProvider>
+              <ReceiptsProvider>
+                <RootLayoutNav />
+              </ReceiptsProvider>
+            </SubscriptionProvider>
           </ThemeProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>

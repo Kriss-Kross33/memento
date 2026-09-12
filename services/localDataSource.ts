@@ -14,7 +14,7 @@ export interface StoredReceipt extends Omit<Receipt, 'media'> {
   mediaId?: string;
 }
 
-/** Persisted media record. `uri` is always a ReceiptSnap-managed path. */
+/** Persisted media record. `uri` is always a Memento-managed path. */
 export interface StoredMedia extends ReceiptMedia {
   receiptId: string;
 }

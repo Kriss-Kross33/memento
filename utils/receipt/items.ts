@@ -1,7 +1,18 @@
 import type { ReceiptItem } from '@/models/types';
 import type { LayoutDocument } from '@/utils/receipt/types';
 import { extractAmounts, parseAmountToken } from '@/utils/receipt/amounts';
-import { fuzzyHasTerm, HEADER_NOISE_TERMS, SERVICE_TERMS, TAX_TERMS, TOTAL_TERMS, SUBTOTAL_TERMS, PAYMENT_TERMS, CHANGE_TERMS } from '@/utils/receipt/vocabulary';
+import { assignMaxWeight } from '@/utils/receipt/assignment';
+import {
+  CHANGE_TERMS,
+  HEADER_NOISE_TERMS,
+  PAYMENT_TERMS,
+  SERVICE_TERMS,
+  SUBTOTAL_TERMS,
+  TAX_TERMS,
+  TOTAL_TERMS,
+  fuzzyHasTerm,
+  isStrongTotalLabel,
+} from '@/utils/receipt/vocabulary';
 
 type ItemCandidate = {
   lineIndex: number;
@@ -59,11 +70,12 @@ const parseQtyAndLabel = (raw: string): { quantity: number; label: string; unitA
 const isServiceOrNoise = (text: string): boolean =>
   fuzzyHasTerm(text, SERVICE_TERMS, 0.8) ||
   fuzzyHasTerm(text, TAX_TERMS, 0.8) ||
-  fuzzyHasTerm(text, TOTAL_TERMS, 0.82) ||
-  fuzzyHasTerm(text, SUBTOTAL_TERMS, 0.82) ||
-  fuzzyHasTerm(text, PAYMENT_TERMS, 0.82) ||
-  fuzzyHasTerm(text, CHANGE_TERMS, 0.82) ||
-  fuzzyHasTerm(text, HEADER_NOISE_TERMS, 0.82) ||
+  isStrongTotalLabel(text) ||
+  fuzzyHasTerm(text, TOTAL_TERMS) ||
+  fuzzyHasTerm(text, SUBTOTAL_TERMS) ||
+  fuzzyHasTerm(text, PAYMENT_TERMS) ||
+  fuzzyHasTerm(text, CHANGE_TERMS) ||
+  fuzzyHasTerm(text, HEADER_NOISE_TERMS) ||
   /\b(pte\.?\s*ltd|llc|inc\.?|reg\.?\s*no)\b/i.test(text) ||
   /^free\b/i.test(text) ||
   QTY_NOTE.test(text) ||
@@ -101,11 +113,11 @@ export const parseItems = (
     const prev = region[position - 1];
     const tenderContext = [line.text, prev?.text ?? ''].join(' ');
     const isTenderPrice =
-      fuzzyHasTerm(tenderContext, PAYMENT_TERMS, 0.8) ||
-      fuzzyHasTerm(tenderContext, CHANGE_TERMS, 0.8) ||
-      fuzzyHasTerm(tenderContext, TOTAL_TERMS, 0.82) ||
-      fuzzyHasTerm(tenderContext, SUBTOTAL_TERMS, 0.82) ||
-      fuzzyHasTerm(tenderContext, TAX_TERMS, 0.8);
+      fuzzyHasTerm(tenderContext, PAYMENT_TERMS) ||
+      fuzzyHasTerm(tenderContext, CHANGE_TERMS) ||
+      isStrongTotalLabel(tenderContext) ||
+      fuzzyHasTerm(tenderContext, SUBTOTAL_TERMS) ||
+      fuzzyHasTerm(tenderContext, TAX_TERMS);
     const rightPrice = amountOnly && line.rightColumnScore >= 0.4 && !isTenderPrice;
     if (rightPrice) {
       prices.push({ lineIndex: line.index, amount: amounts[0], y: line.centerY, x: line.box.x });
@@ -148,36 +160,33 @@ export const parseItems = (
     });
   }
 
-  const edges = itemCandidates.flatMap((item) =>
-    prices.map((price) => ({ item, price, score: pairScore(item, price, layout.width) }))
-  )
-  .filter((pair) => pair.score >= 0.42)
-  .sort((a, b) => b.score - a.score);
-
-  const usedItem = new Set<number>();
-  const usedPrice = new Set<number>();
+  const scoreMatrix = itemCandidates.map((item) =>
+    prices.map((price) => pairScore(item, price, layout.width))
+  );
+  const matches = assignMaxWeight(scoreMatrix, 0.42);
   const resolved: ReceiptItem[] = [];
   let scoreSum = 0;
 
-  for (const edge of edges) {
-    if (usedItem.has(edge.item.lineIndex) || usedPrice.has(edge.price.lineIndex)) continue;
-    usedItem.add(edge.item.lineIndex);
-    usedPrice.add(edge.price.lineIndex);
-    const lineTotal = edge.price.amount;
+  for (const match of matches) {
+    const item = itemCandidates[match.row];
+    const price = prices[match.col];
+    const lineTotal = price.amount;
     if (lineTotal <= 0) continue;
     const unitPrice =
-      edge.item.unitAt != null && Math.abs(edge.item.unitAt * edge.item.quantity - lineTotal) <= 0.12
-        ? edge.item.unitAt
-        : Math.round((lineTotal / Math.max(edge.item.quantity, 1)) * 100) / 100;
+      item.unitAt != null && Math.abs(item.unitAt * item.quantity - lineTotal) <= 0.12
+        ? item.unitAt
+        : Math.round((lineTotal / Math.max(item.quantity, 1)) * 100) / 100;
     resolved.push({
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      label: edge.item.label,
-      quantity: Math.max(1, edge.item.quantity),
+      label: item.label,
+      quantity: Math.max(1, item.quantity),
       unitPrice: Math.max(0.01, unitPrice),
       total: lineTotal,
-      confidence: Math.min(0.99, edge.score),
+      confidence: Math.min(0.99, match.score),
+      sourceLineIndex: item.lineIndex,
+      sourceBox: layout.lines.find((line) => line.index === item.lineIndex)?.box,
     });
-    scoreSum += edge.score;
+    scoreSum += match.score;
   }
 
   for (const item of resolved) {

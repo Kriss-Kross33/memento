@@ -6,6 +6,39 @@ export type ExtractedField<T> = {
   value: T;
   confidence: number;
   source?: string;
+  sourceLineIndex?: number;
+  sourceText?: string;
+  sourceBox?: OcrBox;
+};
+
+export type ReviewField = 'merchant' | 'date' | 'amount' | 'currency' | 'category' | 'items';
+
+export type ReviewState = 'high' | 'medium' | 'low';
+
+export type ReviewRequirement = {
+  field: ReviewField;
+  reason: string;
+};
+
+export type ReceiptWarningCode =
+  | 'items-exceed-total'
+  | 'subtotal-mismatch'
+  | 'line-math'
+  | 'payment-as-total'
+  | 'tax-as-total'
+  | 'totals-inconsistent'
+  | 'competing-totals'
+  | 'duplicate-total-as-item';
+
+export type ReceiptWarning = {
+  code: ReceiptWarningCode;
+  message: string;
+};
+
+export type ReceiptValidation = {
+  isConsistent: boolean;
+  score: number;
+  warnings: ReceiptWarning[];
 };
 
 export type ParsedReceipt = {
@@ -17,7 +50,10 @@ export type ParsedReceipt = {
   receiptNumber?: ExtractedField<string | undefined>;
   notes?: ExtractedField<string | undefined>;
   items: ExtractedField<ReceiptItem[]>;
+  validation: ReceiptValidation;
   overallConfidence: number;
+  reviewState: ReviewState;
+  reviewRequirements: ReviewRequirement[];
 };
 
 export type ParsedReceiptFields = {
@@ -45,6 +81,13 @@ export type LayoutLine = {
   heightRatio: number;
   leftColumnScore: number;
   rightColumnScore: number;
+  ocrConfidence: number;
+};
+
+export type ReceiptRegions = {
+  itemMaxLineIndex: number;
+  totalsMinLineIndex: number;
+  totalsMaxLineIndex: number;
 };
 
 export type LayoutRow = {
@@ -76,4 +119,5 @@ export type Anchor = {
   role: AnchorRole;
   lineIndex: number;
   confidence: number;
+  rank?: number;
 };

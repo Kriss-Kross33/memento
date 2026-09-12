@@ -8,10 +8,12 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { FileSpreadsheet, FileText, Check, Crown, Infinity as InfinityIcon, Zap, Shield, FileDown } from 'lucide-react-native';
+import { FileSpreadsheet, FileText, Check, Crown } from 'lucide-react-native';
 import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { useRouter } from 'expo-router';
 import { Receipt } from '@/models/types';
 import { buildExportFilename } from '@/utils/csv';
 import { shareCsv, sharePdf } from '@/utils/exportShare';
@@ -22,6 +24,8 @@ type ExportScope = 'all' | 'month' | 'range' | 'category';
 
 export default function ExportScreen() {
   const { receipts, categories } = useReceipts();
+  const { hasPro } = useSubscription();
+  const router = useRouter();
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
   const [format, setFormat] = useState<ExportFormat>('csv');
@@ -59,6 +63,10 @@ export default function ExportScreen() {
     setIsExporting(true);
     try {
       if (format === 'pdf') {
+        if (!hasPro) {
+          router.push('/paywall?reason=export');
+          return;
+        }
         await sharePdf(scoped);
       } else {
         await shareCsv(scoped, buildExportFilename());
@@ -124,7 +132,15 @@ export default function ExportScreen() {
           >
             <FileText size={24} color={format === 'pdf' ? Colors.primary : Colors.textSecondary} />
             <View style={styles.formatInfo}>
-              <Text style={[styles.formatName, format === 'pdf' && styles.formatNameSelected]}>PDF</Text>
+              <View style={styles.formatTitleRow}>
+                <Text style={[styles.formatName, format === 'pdf' && styles.formatNameSelected]}>PDF</Text>
+                {!hasPro ? (
+                  <View style={styles.proChip}>
+                    <Crown size={11} color={Colors.primary} />
+                    <Text style={styles.proChipText}>Pro</Text>
+                  </View>
+                ) : null}
+              </View>
               <Text style={styles.formatDesc}>Print-ready report generated on device</Text>
             </View>
             {format === 'pdf' && (
@@ -226,50 +242,30 @@ export default function ExportScreen() {
         testID="export-button"
       />
       <Text style={styles.exportNote}>
-        Generated on your device. Nothing leaves ReceiptSnap unless you share the file.
+        Generated on your device. Nothing leaves Memento unless you share the file.
       </Text>
 
-      {/* Honest product preview — no fake trial, no pricing, no urgency. */}
-      <View style={styles.proSection}>
-        <View style={styles.proHeader}>
-          <Crown size={20} color={Colors.textSecondary} />
-          <Text style={styles.proTitle}>ReceiptSnap Pro</Text>
-          <View style={styles.proBadge}>
-            <Text style={styles.proBadgeText}>Coming soon</Text>
-          </View>
-        </View>
-        <Text style={styles.proDescription}>
-          A preview of what the Pro tier is planning to add. Core features — scanning, organizing,
-          search, and CSV export — will always be free and work offline.
-        </Text>
-
-        <View style={styles.proFeatures}>
-          <View style={styles.proFeature}>
-            <View style={styles.proFeatureIcon}>
-              <InfinityIcon size={16} color={Colors.primary} />
+      {!hasPro ? (
+        <TouchableOpacity
+          style={styles.proSection}
+          onPress={() => router.push('/paywall?reason=export')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Upgrade to Memento Pro"
+        >
+          <View style={styles.proHeader}>
+            <Crown size={20} color={Colors.primary} />
+            <Text style={styles.proTitle}>Memento Pro</Text>
+            <View style={styles.proBadge}>
+              <Text style={styles.proBadgeText}>PDF export</Text>
             </View>
-            <Text style={styles.proFeatureText}>Encrypted cloud backup across devices</Text>
           </View>
-          <View style={styles.proFeature}>
-            <View style={styles.proFeatureIcon}>
-              <Zap size={16} color={Colors.primary} />
-            </View>
-            <Text style={styles.proFeatureText}>Receipt scanning with smart suggestions</Text>
-          </View>
-          <View style={styles.proFeature}>
-            <View style={styles.proFeatureIcon}>
-              <Shield size={16} color={Colors.primary} />
-            </View>
-            <Text style={styles.proFeatureText}>Encrypted cloud backup across devices</Text>
-          </View>
-          <View style={styles.proFeature}>
-            <View style={styles.proFeatureIcon}>
-              <FileDown size={16} color={Colors.primary} />
-            </View>
-            <Text style={styles.proFeatureText}>Deeper spending insights</Text>
-          </View>
-        </View>
-      </View>
+          <Text style={styles.proDescription}>
+            CSV stays free. Pro unlocks PDF reports, unlimited scans, and advanced organization.
+            Receipts still stay on this device.
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </ScrollView>
   );
 }
@@ -317,6 +313,25 @@ const createStyles = (Colors: ThemeColors) =>
   formatInfo: {
     flex: 1,
     marginLeft: 14,
+  },
+  formatTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  proChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primaryMuted,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  proChipText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: Colors.primary,
   },
   formatName: {
     fontSize: 16,

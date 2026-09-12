@@ -1,5 +1,5 @@
 import type { OcrDocument, OcrLine, OcrResult } from '@/services/ocr/types';
-import type { ParseFallback, ParsedReceipt, ParsedReceiptFields } from '@/utils/receipt/types';
+import type { ParseFallback, ParsedReceipt, ParsedReceiptFields, ReceiptValidation } from '@/utils/receipt/types';
 import { buildLayout } from '@/utils/receipt/layout';
 import { resolveReceipt } from '@/utils/receipt/resolve';
 import { extractAmounts } from '@/utils/receipt/amounts';
@@ -42,6 +42,11 @@ export const parseReceiptDocument = (result: OcrDocument | OcrResult, fallback: 
   return resolveReceipt(layout, fallback);
 };
 
+/**
+ * Legacy flatten. Prefer parseReceiptDocument() and read
+ * parsed.merchant.value / parsed.merchant.confidence at the call site.
+ * Only use this at a boundary that truly cannot accept ExtractedField.
+ */
 export const parseReceiptOcr = (result: OcrResult, fallback: ParseFallback): ParsedReceiptFields => {
   const parsed = parseReceiptDocument(result, fallback);
   const items = parsed.items.value;
@@ -57,5 +62,19 @@ export const parseReceiptOcr = (result: OcrResult, fallback: ParseFallback): Par
   };
 };
 
-export type { ParsedReceiptFields, ParsedReceipt, ParseFallback };
-export { needsReview, isLowFieldConfidence, isLowItemConfidence } from '@/utils/receipt/confidence';
+export type { ParsedReceiptFields, ParsedReceipt, ParseFallback, ReceiptValidation };
+export {
+  needsReview,
+  isLowFieldConfidence,
+  isLowItemConfidence,
+  verificationHints,
+  verificationHintsFromOcr,
+  reviewStateFromOverall,
+  buildReviewRequirements,
+  reviewHeadline,
+  reviewSummaryFromOcr,
+  attachReview,
+  REVIEW_THRESHOLDS,
+  CONFIDENCE_WEIGHTS,
+} from '@/utils/receipt/confidence';
+export { validateReceipt } from '@/utils/receipt/validate';

@@ -1,4 +1,4 @@
-# ReceiptSnap
+# Memento
 
 Native iOS, Android, and web app built with [Expo](https://expo.dev) and [Expo Router](https://docs.expo.dev/router/introduction/).
 
