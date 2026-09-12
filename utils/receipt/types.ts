@@ -1,6 +1,14 @@
 import type { Currency } from '@/utils/currency';
 import type { ReceiptItem } from '@/models/types';
 import type { OcrBox, OcrDocument, OcrLine } from '@/services/ocr/types';
+import type {
+  DocumentClassification,
+  ExplicitReturnPolicy,
+  ExplicitWarranty,
+  FieldExplanation,
+  StructuredDiscount,
+  StructuredTax,
+} from '@/models/document';
 
 export type ExtractedField<T> = {
   value: T;
@@ -28,7 +36,9 @@ export type ReceiptWarningCode =
   | 'tax-as-total'
   | 'totals-inconsistent'
   | 'competing-totals'
-  | 'duplicate-total-as-item';
+  | 'duplicate-total-as-item'
+  | 'discount-as-item'
+  | 'totals-math';
 
 export type ReceiptWarning = {
   code: ReceiptWarningCode;
@@ -50,6 +60,15 @@ export type ParsedReceipt = {
   receiptNumber?: ExtractedField<string | undefined>;
   notes?: ExtractedField<string | undefined>;
   items: ExtractedField<ReceiptItem[]>;
+  subtotal?: ExtractedField<number | undefined>;
+  tax?: ExtractedField<number | undefined>;
+  discount?: ExtractedField<number | undefined>;
+  taxes?: StructuredTax[];
+  discounts?: StructuredDiscount[];
+  documentType?: DocumentClassification;
+  explanations?: FieldExplanation[];
+  warranty?: ExplicitWarranty;
+  returnPolicy?: ExplicitReturnPolicy;
   validation: ReceiptValidation;
   overallConfidence: number;
   reviewState: ReviewState;
@@ -109,11 +128,14 @@ export type AmountCandidate = {
   text: string;
   box: OcrBox;
   lineIndex: number;
-  roleScores: Record<'itemPrice' | 'subtotal' | 'tax' | 'total' | 'cash' | 'change' | 'unknown', number>;
+  roleScores: Record<
+    'itemPrice' | 'subtotal' | 'tax' | 'discount' | 'total' | 'cash' | 'change' | 'unknown',
+    number
+  >;
   confidence: number;
 };
 
-export type AnchorRole = 'subtotal' | 'tax' | 'total' | 'cash' | 'change' | 'payment' | 'date';
+export type AnchorRole = 'subtotal' | 'tax' | 'discount' | 'total' | 'cash' | 'change' | 'payment' | 'date';
 
 export type Anchor = {
   role: AnchorRole;

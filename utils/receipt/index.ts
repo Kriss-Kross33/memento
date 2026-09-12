@@ -1,7 +1,10 @@
+import type { DocumentType } from '@/models/document';
 import type { OcrDocument, OcrLine, OcrResult } from '@/services/ocr/types';
 import type { ParseFallback, ParsedReceipt, ParsedReceiptFields, ReceiptValidation } from '@/utils/receipt/types';
 import { buildLayout } from '@/utils/receipt/layout';
-import { resolveReceipt } from '@/utils/receipt/resolve';
+import { findAnchors } from '@/utils/receipt/anchors';
+import { classifyDocument, selectDocumentParser } from '@/utils/document';
+import { mergeOcrPages } from '@/utils/receipt/pages';
 import { extractAmounts } from '@/utils/receipt/amounts';
 import { parseDateFromText } from '@/utils/receipt/date';
 import { fuzzyHasTerm, TOTAL_TERMS, TAX_TERMS } from '@/utils/receipt/vocabulary';
@@ -36,11 +39,29 @@ export const scoreOcrResult = (result: OcrResult): number => {
   return lines.length + amountHits * 2 + dateHits * 3 + totalHits * 5;
 };
 
-export const parseReceiptDocument = (result: OcrDocument | OcrResult, fallback: ParseFallback): ParsedReceipt => {
+export type ParseDocumentOptions = {
+  /** User chose to treat this capture as a specific document type. */
+  treatAs?: DocumentType;
+};
+
+export const parseReceiptDocument = (
+  result: OcrDocument | OcrResult,
+  fallback: ParseFallback,
+  options: ParseDocumentOptions = {}
+): ParsedReceipt => {
   const normalized = normalizeInput(result);
   const layout = buildLayout(normalized);
-  return resolveReceipt(layout, fallback);
+  const anchors = findAnchors(layout);
+  const classification = classifyDocument(layout, anchors);
+  const parser = selectDocumentParser(classification, options.treatAs);
+  return parser.parse(layout, fallback, { classification, anchors });
 };
+
+export const parseReceiptPages = (
+  pages: Array<OcrDocument | OcrResult>,
+  fallback: ParseFallback,
+  options: ParseDocumentOptions = {}
+): ParsedReceipt => parseReceiptDocument(mergeOcrPages(pages.map(normalizeInput)), fallback, options);
 
 /**
  * Legacy flatten. Prefer parseReceiptDocument() and read
@@ -63,6 +84,9 @@ export const parseReceiptOcr = (result: OcrResult, fallback: ParseFallback): Par
 };
 
 export type { ParsedReceiptFields, ParsedReceipt, ParseFallback, ReceiptValidation };
+export { classifyDocument, selectDocumentParser } from '@/utils/document';
+export { mergeOcrPages } from '@/utils/receipt/pages';
+export { resolveCurrency } from '@/utils/receipt/currency';
 export {
   needsReview,
   isLowFieldConfidence,

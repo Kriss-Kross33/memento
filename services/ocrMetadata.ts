@@ -16,4 +16,9 @@ export const buildOcrMetadata = (
   itemsConfidence: parsed?.items.confidence ?? 0,
   overallConfidence: parsed?.overallConfidence ?? 0,
   processedAt: new Date().toISOString(),
+  documentType: parsed?.documentType?.type,
+  documentTypeConfidence: parsed?.documentType?.confidence,
+  suggestedMerchant: parsed?.merchant.value || undefined,
+  suggestedCategory: parsed?.category.value || undefined,
+  reviewHints: parsed?.explanations?.map((entry) => ({ field: entry.field, message: entry.message })),
 });

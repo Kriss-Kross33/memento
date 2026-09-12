@@ -22,6 +22,7 @@ type Props = {
   subtitle: string;
   requirements: ReviewRequirement[];
   values: ReviewValues;
+  explanations?: Array<{ field: string; message: string }>;
   onSelectField?: (field: ReviewField) => void;
 };
 
@@ -31,6 +32,7 @@ export default function SmartReviewCard({
   subtitle,
   requirements,
   values,
+  explanations,
   onSelectField,
 }: Props) {
   const Colors = useThemeColors();
@@ -77,6 +79,11 @@ export default function SmartReviewCard({
                   <Text style={styles.fieldValue} numberOfLines={1}>
                     {values[field] || requirement?.reason || 'Needs a closer look'}
                   </Text>
+                  {isUncertain && explanations?.find((entry) => entry.field === field) ? (
+                    <Text style={styles.why} numberOfLines={3}>
+                      {explanations.find((entry) => entry.field === field)?.message}
+                    </Text>
+                  ) : null}
                 </View>
               </TouchableOpacity>
             );
@@ -158,5 +165,11 @@ const createStyles = (Colors: ThemeColors) =>
       fontSize: 14,
       color: Colors.text,
       marginTop: 1,
+    },
+    why: {
+      fontSize: 12,
+      lineHeight: 16,
+      color: Colors.textSecondary,
+      marginTop: 4,
     },
   });

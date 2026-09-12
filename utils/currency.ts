@@ -1,4 +1,4 @@
-export type Currency = 'GHS' | 'USD' | 'GBP' | 'EUR' | 'SGD';
+export type Currency = 'GHS' | 'USD' | 'GBP' | 'EUR' | 'SGD' | 'CAD' | 'AUD' | 'NZD';
 
 export interface CurrencyMeta {
   code: Currency;
@@ -12,6 +12,9 @@ export const currencies: CurrencyMeta[] = [
   { code: 'GBP', symbol: '£', label: 'British Pound' },
   { code: 'EUR', symbol: '€', label: 'Euro' },
   { code: 'SGD', symbol: 'S$', label: 'Singapore Dollar' },
+  { code: 'CAD', symbol: 'CA$', label: 'Canadian Dollar' },
+  { code: 'AUD', symbol: 'A$', label: 'Australian Dollar' },
+  { code: 'NZD', symbol: 'NZ$', label: 'New Zealand Dollar' },
 ];
 
 export const DEFAULT_CURRENCY: Currency = 'GHS';

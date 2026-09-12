@@ -1,13 +1,22 @@
-import type { LayoutDocument, ParsedReceipt } from '@/utils/receipt/types';
+import type { DocumentClassification } from '@/models/document';
+import type { Anchor, LayoutDocument, ParsedReceipt } from '@/utils/receipt/types';
 import { extractAmountCandidates } from '@/utils/receipt/amounts';
 import { parseItems } from '@/utils/receipt/items';
 import { pickDateCandidate } from '@/utils/receipt/date';
 import { pickMerchantCandidate, isEcgReceipt } from '@/utils/receipt/merchant';
 import { deriveRegions, findAnchors } from '@/utils/receipt/anchors';
-import { pickCurrencyCandidate, guessCategoryCandidate } from '@/utils/receipt/currency';
+import { resolveCurrency, guessCategoryCandidate } from '@/utils/receipt/currency';
+import { extractDiscounts, extractTaxes, pickPrintedSubtotal, sumCharges, sumDiscounts } from '@/utils/receipt/charges';
+import { extractExplicitReturnPolicy, extractExplicitWarranty } from '@/utils/receipt/lifecycle';
+import { buildFieldExplanations } from '@/utils/receipt/explanations';
 import { validateReceipt } from '@/utils/receipt/validate';
 import { attachReview } from '@/utils/receipt/confidence';
 import { blendOcrConfidence, extracted } from '@/utils/receipt/field';
+
+export type ResolveExtras = {
+  classification?: DocumentClassification;
+  anchors?: Anchor[];
+};
 
 const pickTotal = (
   layout: LayoutDocument,
@@ -68,9 +77,10 @@ const buildNotes = (receiptNumber: string | undefined): string | undefined => {
 
 export const resolveReceipt = (
   layout: LayoutDocument,
-  fallback: { date: string; currency: import('@/utils/currency').Currency }
+  fallback: { date: string; currency: import('@/utils/currency').Currency },
+  extras: ResolveExtras = {}
 ): ParsedReceipt => {
-  const anchors = findAnchors(layout);
+  const anchors = extras.anchors ?? findAnchors(layout);
   const regions = deriveRegions(layout, anchors);
   const amounts = extractAmountCandidates(layout, anchors, regions);
   const fullText = layout.lines.map((line) => line.text).join('\n');
@@ -80,7 +90,7 @@ export const resolveReceipt = (
   const totalCandidate = pickTotal(layout, regions.totalsMinLineIndex, regions.totalsMaxLineIndex, amounts);
   const totalLine =
     totalCandidate.lineIndex != null ? layout.lines.find((line) => line.index === totalCandidate.lineIndex) : undefined;
-  const currencyCandidate = pickCurrencyCandidate(layout, merchantCandidate.value, fallback.currency);
+  const currencyCandidate = resolveCurrency(layout, merchantCandidate.value, fallback.currency);
   const categoryCandidate = isEcgReceipt(fullText)
     ? { value: 'Utilities', confidence: 0.95, source: 'ecg-signature' }
     : guessCategoryCandidate(fullText, merchantCandidate.value, merchantCandidate.categoryHint);
@@ -90,6 +100,13 @@ export const resolveReceipt = (
   const receiptNumberLine = receiptNumber.source
     ? layout.lines.find((line) => line.text.includes(receiptNumber.source) || receiptNumber.source.includes(line.text))
     : undefined;
+  const taxes = extractTaxes(layout, amounts);
+  const discounts = extractDiscounts(layout, amounts);
+  const printedSubtotal = pickPrintedSubtotal(amounts);
+  const taxTotal = sumCharges(taxes);
+  const discountTotal = sumDiscounts(discounts);
+  const warranty = extractExplicitWarranty(fullText, dateCandidate.value);
+  const returnPolicy = extractExplicitReturnPolicy(fullText, dateCandidate.value);
 
   const merchant = extracted(
     merchantCandidate.value,
@@ -116,6 +133,10 @@ export const resolveReceipt = (
     total: amount.value,
     items: items.value,
     amounts,
+    subtotal: printedSubtotal,
+    discount: discountTotal,
+    taxes,
+    discounts,
   });
 
   const parsed = {
@@ -127,8 +148,18 @@ export const resolveReceipt = (
     receiptNumber: extracted(receiptNumber.value, receiptNumber.confidence, receiptNumberLine, receiptNumber.source),
     notes: extracted(notes, notes ? 0.8 : 0.4, receiptNumberLine, notes ? 'receipt-number' : 'none'),
     items,
+    subtotal: extracted(printedSubtotal, printedSubtotal != null ? 0.86 : 0.2, undefined, printedSubtotal != null ? 'subtotal' : 'none'),
+    tax: extracted(taxTotal || undefined, taxTotal > 0 ? 0.82 : 0.2, undefined, taxTotal > 0 ? 'taxes' : 'none'),
+    discount: extracted(discountTotal || undefined, discountTotal > 0 ? 0.8 : 0.2, undefined, discountTotal > 0 ? 'discounts' : 'none'),
+    taxes,
+    discounts,
+    documentType: extras.classification,
+    warranty,
+    returnPolicy,
+    explanations: [] as ReturnType<typeof buildFieldExplanations>,
     validation,
   };
+  parsed.explanations = buildFieldExplanations({ parsed, amounts });
 
   return attachReview(parsed);
 };

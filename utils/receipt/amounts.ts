@@ -1,6 +1,7 @@
 import type { AmountCandidate, Anchor, LayoutDocument, LayoutLine, ReceiptRegions } from '@/utils/receipt/types';
 import {
   CHANGE_TERMS,
+  DISCOUNT_TERMS,
   PAYMENT_TERMS,
   SUBTOTAL_TERMS,
   TAX_TERMS,
@@ -91,6 +92,8 @@ export const scoreAmountRoles = (
     nearestAnchorDistance(anchors, 'payment', line.index) <= 1 || fuzzyHasTerm(context, PAYMENT_TERMS);
   const changeNear = nearestAnchorDistance(anchors, 'change', line.index) <= 1 || fuzzyHasTerm(context, CHANGE_TERMS);
   const subtotalLabel = fuzzyHasTerm(context, SUBTOTAL_TERMS);
+  const discountNear =
+    nearestAnchorDistance(anchors, 'discount', line.index) <= 1 || fuzzyHasTerm(context, DISCOUNT_TERMS);
   const strongTotal = isStrongTotalLabel(context) && !isNonPayableTotal(context);
 
   const labelScore = strongTotal ? 0.95 : 0.08;
@@ -107,10 +110,11 @@ export const scoreAmountRoles = (
         (inItems ? 0.28 : 0) +
         (neighborHasWords && inItems ? 0.12 : 0) -
         (strongTotal ? 0.45 : 0) -
-        (taxNear || paymentNear || changeNear || subtotalLabel ? 0.4 : 0)
+        (taxNear || paymentNear || changeNear || subtotalLabel || discountNear ? 0.4 : 0)
     ),
     subtotal: clamp01((subtotalLabel ? 0.92 : 0.06) + (inTotals ? 0.08 : 0)),
     tax: clamp01((taxNear ? 0.9 : 0.06) + (inTotals ? 0.06 : 0) - (strongTotal ? 0.25 : 0)),
+    discount: clamp01((discountNear ? 0.9 : 0.04) + (inTotals ? 0.06 : 0) - (strongTotal ? 0.25 : 0)),
     total: clamp01(
       labelScore + regionScore + rightAlignmentScore + neighborScore - taxPenalty - paymentPenalty - itemPenalty
     ),

@@ -33,6 +33,11 @@ export interface ReceiptItem {
   confidence?: number;
   sourceLineIndex?: number;
   sourceBox?: { x: number; y: number; width: number; height: number };
+  brand?: string;
+  normalizedName?: string;
+  sku?: string;
+  barcode?: string;
+  category?: string;
 }
 
 /**
@@ -46,7 +51,8 @@ export interface ReceiptMedia {
   type?: 'image';
   status?: MediaStatus;
   addedAt: string;
-  source: 'camera' | 'library';
+  source: 'camera' | 'library' | 'file' | 'share' | 'pdf';
+  pageIndex?: number;
 }
 
 export interface Receipt {
@@ -92,23 +98,33 @@ export interface Category {
   builtin?: boolean;
 }
 
-/** Future dedicated warranty records (V2 OCR suggestions, product names). */
+/** Future dedicated warranty records. Never invent a period. */
 export interface Warranty {
   id: string;
   receiptId: string;
   productName: string;
   startDate: string;
-  expiryDate: string;
+  duration?: string;
+  expiryDate?: string;
+  provider?: string;
+  terms?: string;
   notes?: string;
+  confidence?: number;
+  source?: string;
 }
 
-/** Future dedicated return-policy records (V2 reminders via notifications). */
+/** Future dedicated return-policy records. Never invent a deadline. */
 export interface ReturnPolicy {
   id: string;
   receiptId: string;
-  returnWindowDays: number;
-  expiryDate: string;
+  returnWindowDays?: number;
+  startDate?: string;
+  deadline?: string;
+  expiryDate?: string;
+  policyText?: string;
   notes?: string;
+  confidence?: number;
+  source?: string;
 }
 
 /** User-defined tags (#business, #tax, #travel, ...). */
@@ -138,4 +154,9 @@ export interface OCRMetadata {
   itemsConfidence?: number;
   overallConfidence?: number;
   processedAt?: string;
+  documentType?: string;
+  documentTypeConfidence?: number;
+  suggestedMerchant?: string;
+  suggestedCategory?: string;
+  reviewHints?: Array<{ field: string; message: string }>;
 }

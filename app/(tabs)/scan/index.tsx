@@ -25,10 +25,11 @@ import { readReceipt } from '@/services/ocr/pipeline';
 import { buildOcrMetadata } from '@/services/ocrMetadata';
 import { isDocumentScannerAvailable, scanReceiptDocument } from '@/services/documentScanner';
 import { importReceiptImage } from '@/services/receiptMedia';
+import { findDuplicateMatches } from '@/services/intelligence/duplicates';
 
 export default function ScanScreen() {
   const router = useRouter();
-  const { addReceipt, defaultCurrency } = useReceipts();
+  const { addReceipt, defaultCurrency, receipts } = useReceipts();
   const { requestScan, consumeScan } = useSubscription();
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<'back' | 'front'>('back');
@@ -105,6 +106,13 @@ export default function ScanScreen() {
         receiptNumber: parsed.receiptNumber?.value,
         notes: parsed.notes?.value ?? '',
         items: parsed.items.value,
+        subtotal: parsed.subtotal?.value,
+        tax: parsed.tax?.value,
+        discount: parsed.discount?.value,
+        warrantyUntil: parsed.warranty?.expiryDate,
+        returnWindowDays: parsed.returnPolicy?.duration?.match(/^(\d+) days$/)
+          ? Number(parsed.returnPolicy.duration.match(/^(\d+)/)?.[1])
+          : undefined,
         ocr: buildOcrMetadata(parsed, true),
       },
     };
@@ -153,6 +161,30 @@ export default function ScanScreen() {
       }
       const id = await addReceipt({ ...result.fields, media });
       await consumeScan();
+      const scannedFields = result.fields as typeof result.fields & {
+        receiptNumber?: string;
+        items?: Array<{ label: string }>;
+      };
+      const duplicate = findDuplicateMatches(
+        {
+          merchant: scannedFields.merchant,
+          date: scannedFields.date,
+          amount: scannedFields.amount,
+          receiptNumber: scannedFields.receiptNumber,
+          itemLabels: scannedFields.items?.map((item) => item.label),
+        },
+        receipts.map((entry) => ({
+          id: entry.id,
+          merchant: entry.merchant,
+          date: entry.date,
+          amount: entry.amount,
+          receiptNumber: entry.receiptNumber,
+          itemLabels: entry.items?.map((item) => item.label),
+        }))
+      )[0];
+      if (duplicate) {
+        Alert.alert('This looks like a receipt you already saved.', 'You can keep both, or delete one later.');
+      }
       openReview(id);
     } catch (error) {
       console.warn('[scan] save failed', error);

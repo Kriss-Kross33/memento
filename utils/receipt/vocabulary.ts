@@ -45,7 +45,8 @@ const OCR_TOKEN_CORRECTIONS: Record<string, string> = {
 
 export const TOTAL_TERMS = ['grand total', 'amount due', 'total due', 'net payable', 'amount paid', 'total purchase', 'total'];
 export const SUBTOTAL_TERMS = ['subtotal', 'sub total', 'sub-total'];
-export const TAX_TERMS = ['tax', 'vat', 'gst', 'nhil', 'levy', 'getfund'];
+export const TAX_TERMS = ['tax', 'vat', 'gst', 'nhil', 'levy', 'getfund', 'get fund', 'service charge'];
+export const DISCOUNT_TERMS = ['discount', 'promo', 'promotion', 'coupon', 'savings', 'loyalty', 'store credit', 'voucher'];
 export const PAYMENT_TERMS = ['payment', 'cash', 'card', 'visa', 'mastercard', 'momo', 'tendered'];
 export const CHANGE_TERMS = ['change', 'change due'];
 export const SERVICE_TERMS = ['eat in', 'dine in', 'takeaway', 'take away'];

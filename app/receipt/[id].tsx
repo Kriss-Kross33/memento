@@ -42,6 +42,7 @@ import ReceiptImageViewer from '@/components/ReceiptImageViewer';
 import { shareCsv, sharePdf } from '@/utils/exportShare';
 import { readReceipt } from '@/services/ocr/pipeline';
 import { buildOcrMetadata } from '@/services/ocrMetadata';
+import { recordUserCorrections } from '@/services/intelligence/store';
 import { isLowFieldConfidence, isLowItemConfidence, reviewSummaryFromOcr } from '@/utils/receipt/confidence';
 import SmartReviewCard from '@/components/SmartReviewCard';
 import { useSubscription } from '@/context/SubscriptionContext';
@@ -212,6 +213,13 @@ export default function ReceiptDetailScreen() {
       warrantyUntil,
       returnWindowDays,
     });
+    void recordUserCorrections({
+      scannedMerchant: receipt?.ocr?.suggestedMerchant,
+      savedMerchant: merchant,
+      scannedCategory: receipt?.ocr?.suggestedCategory,
+      savedCategory: category,
+      currency,
+    });
     dismiss();
   };
 
@@ -282,7 +290,9 @@ export default function ReceiptDetailScreen() {
     }
     setIsRereading(true);
     try {
-      const { document, parsed } = await readReceipt(uri, { date, currency }, receipt.media?.source ?? 'unknown');
+      const mediaSource = receipt.media?.source;
+      const ocrSource = mediaSource === 'camera' || mediaSource === 'library' ? mediaSource : 'unknown';
+      const { document, parsed } = await readReceipt(uri, { date, currency }, ocrSource);
       if (!document) {
         Alert.alert(
           "Receipt couldn't be read",
@@ -295,7 +305,8 @@ export default function ReceiptDetailScreen() {
       const nextDate = parsed.date.value || date;
       const nextAmount = parsed.amount.value > 0 ? parsed.amount.value : parseFloat(amount) || 0;
       const nextCategory = parsed.category.value || category;
-      const nextCurrency = parsed.currency.value || currency;
+      const nextCurrency =
+        parsed.currency.confidence >= 0.8 ? parsed.currency.value || currency : currency;
       const nextNotes = parsed.notes?.value && !notes.trim() ? parsed.notes.value : notes;
       const nextItems = parsed.items.value;
       const nextOcr = buildOcrMetadata(parsed, true);
@@ -565,6 +576,7 @@ export default function ReceiptDetailScreen() {
                     ? `${items.length} ${items.length === 1 ? 'item' : 'items'}`
                     : undefined,
             }}
+            explanations={receipt.ocr?.reviewHints}
             onSelectField={setFocusField}
           />
         ) : null}

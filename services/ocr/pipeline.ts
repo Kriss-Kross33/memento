@@ -14,6 +14,7 @@ import type { OcrEngineId } from '@/services/ocr/types';
 import { parseReceiptDocument, scoreOcrResult } from '@/utils/receipt';
 import { attachReview, RETRY_CONFIDENCE } from '@/utils/receipt/confidence';
 import type { ParseFallback, ParsedReceipt } from '@/utils/receipt/types';
+import { applyLocalIntelligence } from '@/services/intelligence/store';
 
 export type ReadReceiptOptions = {
   force?: boolean;
@@ -87,6 +88,7 @@ export async function readReceipt(
     plan.reason === 'none' ? 'pass:original' : `pass:${plan.reason}`
   );
   let parsed = document ? parseReceiptDocument(document, fallback) : emptyParsed(fallback);
+  if (document) parsed = attachReview(await applyLocalIntelligence(parsed));
   let retries = 0;
 
   if (isThin(document, parsed) && Platform.OS !== 'web' && uri) {
@@ -107,7 +109,7 @@ export async function readReceipt(
       retries = 1;
       const second = await recognizeTextOnImage(retryUri, retryLabel);
       if (second) {
-        const secondParsed = parseReceiptDocument(second, fallback);
+        const secondParsed = attachReview(await applyLocalIntelligence(parseReceiptDocument(second, fallback)));
         if (rank(second, secondParsed) > rank(document, parsed)) {
           document = second;
           parsed = secondParsed;

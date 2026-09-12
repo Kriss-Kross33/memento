@@ -4,6 +4,7 @@ import {
   PAYMENT_TERMS,
   SUBTOTAL_TERMS,
   TAX_TERMS,
+  DISCOUNT_TERMS,
   fuzzyHasTerm,
   isStrongTotalLabel,
   totalLabelRank,
@@ -23,6 +24,9 @@ export const findAnchors = (layout: LayoutDocument): Anchor[] => {
     }
     if (fuzzyHasTerm(text, TAX_TERMS)) {
       anchors.push({ role: 'tax', lineIndex: line.index, confidence: 0.85, rank: 40 });
+    }
+    if (fuzzyHasTerm(text, DISCOUNT_TERMS)) {
+      anchors.push({ role: 'discount', lineIndex: line.index, confidence: 0.84, rank: 35 });
     }
     if (fuzzyHasTerm(text, PAYMENT_TERMS)) {
       anchors.push({ role: 'payment', lineIndex: line.index, confidence: 0.8, rank: 30 });
