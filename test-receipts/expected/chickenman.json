@@ -1,0 +1,12 @@
+{
+  "id": "chickenman",
+  "documentType": "receipt",
+  "merchant": "Chickenman",
+  "date": "2025-10-29",
+  "amount": 230,
+  "currency": "GHS",
+  "items": [
+    { "label": "Kersame Large", "quantity": 1, "unitPrice": 170, "total": 170 },
+    { "label": "Ceres", "quantity": 1, "unitPrice": 60, "total": 60 }
+  ]
+}

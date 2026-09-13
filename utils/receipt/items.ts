@@ -12,7 +12,10 @@ import {
   TAX_TERMS,
   TOTAL_TERMS,
   fuzzyHasTerm,
+  isColumnHeaderLabel,
   isStrongTotalLabel,
+  isTaxExclusiveSubtotal,
+  isTaxInclusiveTotal,
 } from '@/utils/receipt/vocabulary';
 import { MAX_ITEM_LABEL_LENGTH, MAX_ITEM_QUANTITY, MAX_RECEIPT_ITEMS } from '@/utils/receipt/limits';
 
@@ -33,9 +36,9 @@ type PriceCandidate = {
 };
 
 const BARCODE = /\b\d{8,14}[A-Z]{0,2}\b/g;
-const PRICE_LINE = /^\s*(?:[$£€₵])?\s*\d+[.,]\d{2}\s*[ONXTFE0]?\s*$/i;
+const PRICE_LINE = /^\s*(?:[$£€₵])?\s*\d+(?:[.,]\d{2})?\s*[ONXTFE0C]?\s*$/i;
 const QTY_NOTE = /^\d+\s*(?:AT|FOR|lb|1b)\b/i;
-const JUNK_LABEL = /^(at|for|lb|1b|f|kf|n|o|x|t)$/i;
+const JUNK_LABEL = /^(at|for|lb|1b|f|kf|n|o|x|t|ghs|ghc)$/i;
 
 const cleanLabel = (value: string): string =>
   value
@@ -79,11 +82,55 @@ const isServiceOrNoise = (text: string): boolean =>
   fuzzyHasTerm(text, CHANGE_TERMS) ||
   fuzzyHasTerm(text, HEADER_NOISE_TERMS) ||
   fuzzyHasTerm(text, DISCOUNT_TERMS) ||
+  isColumnHeaderLabel(text) ||
+  isTaxExclusiveSubtotal(text) ||
+  isTaxInclusiveTotal(text) ||
+  /\b(levy|nhil|getfund|covid)\b/i.test(text) ||
   /\b(pte\.?\s*ltd|llc|inc\.?|reg\.?\s*no)\b/i.test(text) ||
   /^free\b/i.test(text) ||
   QTY_NOTE.test(text) ||
   /^0{3,}\d+[A-Z]{0,2}$/i.test(text) ||
   /^\d{8,}[A-Z]{0,2}$/i.test(text);
+
+const almost = (a: number, b: number, slack = 0.08): boolean => Math.abs(a - b) <= slack;
+
+/** Layout D prints PRICE and AMOUNT. Keep only the right-hand line-total column. */
+const keepLineTotalPrices = (prices: PriceCandidate[], docWidth: number): PriceCandidate[] => {
+  const right = prices.filter((price) => price.x >= docWidth * 0.48);
+  if (right.length < 4) return prices;
+  const sorted = [...right].sort((a, b) => a.x - b.x);
+  let gapAt = 0;
+  let gap = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const delta = sorted[i].x - sorted[i - 1].x;
+    if (delta > gap) {
+      gap = delta;
+      gapAt = i;
+    }
+  }
+  if (gap < 70) return prices;
+  const amountColumn = new Set(sorted.slice(gapAt));
+  if (amountColumn.size < 2) return prices;
+  return prices.filter((price) => price.x < docWidth * 0.48 || amountColumn.has(price));
+};
+
+const dropFalseItems = (items: ReceiptItem[], total: number): ReceiptItem[] => {
+  const products = items.filter((item) => {
+    if (isColumnHeaderLabel(item.label) || JUNK_LABEL.test(item.label)) return false;
+    if (/^total\b/i.test(item.label)) return false;
+    if (isTaxExclusiveSubtotal(item.label) || isTaxInclusiveTotal(item.label)) return false;
+    if (isServiceOrNoise(item.label)) return false;
+    if (total > 0 && items.length > 1 && almost(item.total ?? item.unitPrice, total, 0.05)) return false;
+    return true;
+  });
+  if (products.length === 0) return items;
+  const sum = (list: ReceiptItem[]) =>
+    list.reduce((acc, item) => acc + (item.total ?? item.quantity * item.unitPrice), 0);
+  if (total > 0 && sum(items) > total + 0.2 && sum(products) <= total + 0.2) {
+    return products;
+  }
+  return products;
+};
 
 const pairScore = (item: ItemCandidate, price: PriceCandidate, docWidth: number): number => {
   const dy = price.y - item.y;
@@ -103,7 +150,7 @@ export const parseItems = (
   total: number,
   itemMaxLineIndex: number
 ): { items: ReceiptItem[]; confidence: number } => {
-  const region = layout.lines.filter((line) => line.index <= itemMaxLineIndex);
+  const region = layout.lines.filter((line) => line.index < itemMaxLineIndex);
   const itemCandidates: ItemCandidate[] = [];
   const prices: PriceCandidate[] = [];
 
@@ -151,7 +198,7 @@ export const parseItems = (
     if (line.normalizedY < 0.18) continue;
     const parsed = parseQtyAndLabel(line.text);
     if (!parsed.label || parsed.label.length < 2 || parsed.label.length > MAX_ITEM_LABEL_LENGTH) continue;
-    if (JUNK_LABEL.test(parsed.label)) continue;
+    if (JUNK_LABEL.test(parsed.label) || isColumnHeaderLabel(parsed.label)) continue;
     if (parsed.quantity > MAX_ITEM_QUANTITY && parsed.unitAt == null) continue;
     itemCandidates.push({
       lineIndex: line.index,
@@ -163,8 +210,9 @@ export const parseItems = (
     });
   }
 
+  const usablePrices = keepLineTotalPrices(prices, layout.width);
   const scoreMatrix = itemCandidates.map((item) =>
-    prices.map((price) => pairScore(item, price, layout.width))
+    usablePrices.map((price) => pairScore(item, price, layout.width))
   );
   const matches = assignMaxWeight(scoreMatrix, 0.42);
   const resolved: ReceiptItem[] = [];
@@ -172,7 +220,7 @@ export const parseItems = (
 
   for (const match of matches) {
     const item = itemCandidates[match.row];
-    const price = prices[match.col];
+    const price = usablePrices[match.col];
     const lineTotal = price.amount;
     if (lineTotal <= 0) continue;
     const unitPrice =
@@ -230,9 +278,10 @@ export const parseItems = (
     scoreSum = 0.55;
   }
 
-  const subtotal = resolved.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0);
-  const consistency = total > 0 && resolved.length > 0 ? Math.max(0, 1 - Math.abs(subtotal - total) / Math.max(total, 1)) : 0.4;
-  const capped = resolved.slice(0, MAX_RECEIPT_ITEMS);
+  const cleaned = dropFalseItems(resolved, total);
+  const subtotal = cleaned.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0);
+  const consistency = total > 0 && cleaned.length > 0 ? Math.max(0, 1 - Math.abs(subtotal - total) / Math.max(total, 1)) : 0.4;
+  const capped = cleaned.slice(0, MAX_RECEIPT_ITEMS);
   const confidence = capped.length === 0 ? 0.35 : Math.min(0.99, (scoreSum / Math.max(capped.length, 1)) * 0.7 + consistency * 0.3);
   return { items: capped, confidence };
 };

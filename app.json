@@ -17,7 +17,21 @@
       "supportsTablet": false,
       "bundleIdentifier": "app.memento.mobile",
       "infoPlist": {
-        "NSCameraUsageDescription": "Allow Memento to detect and scan receipts."
+        "NSCameraUsageDescription": "Allow Memento to detect and scan receipts.",
+        "NSPhotoLibraryUsageDescription": "Allow Memento to import receipt photos.",
+        "LSSupportsOpeningDocumentsInPlace": false,
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Images",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.image", "public.jpeg", "public.png"]
+          },
+          {
+            "CFBundleTypeName": "PDF",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["com.adobe.pdf"]
+          }
+        ]
       }
     },
     "android": {
@@ -25,7 +39,25 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "app.memento.mobile"
+      "package": "app.memento.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            { "mimeType": "image/*" },
+            { "mimeType": "application/pdf" }
+          ]
+        },
+        {
+          "action": "SEND",
+          "category": ["DEFAULT"],
+          "data": [
+            { "mimeType": "image/*" },
+            { "mimeType": "application/pdf" }
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -73,7 +105,14 @@
         }
       ],
       "expo-sqlite",
-      "expo-document-picker"
+      "expo-document-picker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#10151f"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

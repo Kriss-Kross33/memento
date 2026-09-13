@@ -1,8 +1,11 @@
 import type { Receipt } from '@/models/types';
 import type { Currency } from '@/utils/currency';
+import { returnStatusFor, warrantyStatusFor, type ReturnStatus, type WarrantyStatus } from '@/utils/protection';
 
 /** Structured search — not natural language. */
 export type PurchaseQuery = {
+  /** Free-text OR across merchant, items, notes, number, amount, date, tags. */
+  text?: string;
   merchant?: string;
   item?: string;
   category?: string;
@@ -16,6 +19,8 @@ export type PurchaseQuery = {
   notes?: string;
   warrantyExpiringBefore?: string;
   returnAvailableOn?: string;
+  warrantyStatus?: Exclude<WarrantyStatus, 'unknown'>;
+  returnStatus?: Exclude<ReturnStatus, 'unknown' | 'returned'>;
 };
 
 const includes = (haystack: string | undefined, needle: string): boolean =>
@@ -29,7 +34,23 @@ const returnDeadline = (receipt: Receipt): string | undefined => {
   return date.toISOString().slice(0, 10);
 };
 
+const matchesText = (receipt: Receipt, text: string): boolean => {
+  const amountText = receipt.amount.toFixed(2);
+  return (
+    includes(receipt.merchant, text) ||
+    includes(receipt.category, text) ||
+    includes(receipt.notes, text) ||
+    includes(receipt.receiptNumber, text) ||
+    includes(receipt.date, text) ||
+    amountText.includes(text.toLowerCase()) ||
+    String(receipt.amount).includes(text) ||
+    (receipt.tags ?? []).some((tag) => includes(tag, text)) ||
+    (receipt.items ?? []).some((item) => includes(item.label, text))
+  );
+};
+
 export const matchPurchaseQuery = (receipt: Receipt, query: PurchaseQuery): boolean => {
+  if (query.text && !matchesText(receipt, query.text)) return false;
   if (query.merchant && !includes(receipt.merchant, query.merchant)) return false;
   if (query.category && !includes(receipt.category, query.category)) return false;
   if (query.currency && receipt.currency !== query.currency) return false;
@@ -50,5 +71,7 @@ export const matchPurchaseQuery = (receipt: Receipt, query: PurchaseQuery): bool
     const deadline = returnDeadline(receipt);
     if (!deadline || deadline < query.returnAvailableOn) return false;
   }
+  if (query.warrantyStatus && warrantyStatusFor(receipt) !== query.warrantyStatus) return false;
+  if (query.returnStatus && returnStatusFor(receipt) !== query.returnStatus) return false;
   return true;
 };

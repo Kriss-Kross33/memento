@@ -44,6 +44,16 @@ export interface ReceiptItem {
  * Managed receipt media. `uri` always points at Memento's own app storage
  * (a private copy), never at the user's original Photos/Gallery asset.
  */
+export type FieldOriginSource = 'ocr' | 'user';
+
+/** How a filed value was last set — OCR suggestion vs a user correction. */
+export interface FieldOrigin {
+  field: string;
+  originalValue: string;
+  source: FieldOriginSource;
+  correctedAt?: string;
+}
+
 export interface ReceiptMedia {
   id: string;
   uri: string;
@@ -53,6 +63,8 @@ export interface ReceiptMedia {
   addedAt: string;
   source: 'camera' | 'library' | 'file' | 'share' | 'pdf';
   pageIndex?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface Receipt {
@@ -71,7 +83,19 @@ export interface Receipt {
   categoryId?: string;
   notes?: string;
   items?: ReceiptItem[];
+  /** First page — kept for older screens that read a single image. */
   media?: ReceiptMedia;
+  /** All managed pages for this purchase, ordered by pageIndex. */
+  sourceMedia?: ReceiptMedia[];
+  taxes?: Array<{ name: string; rate?: number; amount: number; confidence: number; source: string }>;
+  discounts?: Array<{
+    name: string;
+    amount: number;
+    confidence: number;
+    source: string;
+    kind: 'discount' | 'coupon' | 'promotion' | 'loyalty' | 'store_credit';
+  }>;
+  fieldOrigins?: FieldOrigin[];
   tags?: string[];
   ocr?: OCRMetadata;
   /** ISO date the manufacturer/vendor warranty expires, if tracked. */

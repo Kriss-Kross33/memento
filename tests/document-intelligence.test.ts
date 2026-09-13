@@ -144,6 +144,58 @@ test('structured purchase search matches merchant, amount, and item', () => {
   assert.equal(matchPurchaseQuery(receipt, { currency: 'USD' }), false);
 });
 
+test('reads Ghana column receipts with whole-number prices and a tax-inclusive total', () => {
+  const dump: OcrDocument = {
+    text: '',
+    width: 1200,
+    height: 2300,
+    blocks: [],
+    lines: [
+      { text: 'CHICKENMAN', boundingBox: { x: 342, y: 73, width: 495, height: 56 } },
+      { text: 'TAX INVOICE', boundingBox: { x: 377, y: 172, width: 432, height: 47 } },
+      { text: 'October 29th 2025.', boundingBox: { x: 272, y: 578, width: 316, height: 33 } },
+      { text: 'CASH', boundingBox: { x: 734, y: 755, width: 106, height: 30 } },
+      { text: 'ITEM', boundingBox: { x: 181, y: 968, width: 85, height: 30 } },
+      { text: 'QTY', boundingBox: { x: 541, y: 983, width: 76, height: 29 } },
+      { text: '(GHS)', boundingBox: { x: 648, y: 1014, width: 108, height: 39 } },
+      { text: '(GHS)', boundingBox: { x: 838, y: 1022, width: 114, height: 41 } },
+      { text: 'Kersame Large', boundingBox: { x: 175, y: 1058, width: 242, height: 47 } },
+      { text: '1', boundingBox: { x: 600, y: 1081, width: 8, height: 24 } },
+      { text: '170', boundingBox: { x: 723, y: 1086, width: 56, height: 28 } },
+      { text: '17C', boundingBox: { x: 938, y: 1096, width: 57, height: 29 } },
+      { text: 'Ceres', boundingBox: { x: 173, y: 1115, width: 93, height: 32 } },
+      { text: '1', boundingBox: { x: 599, y: 1140, width: 9, height: 24 } },
+      { text: '60', boundingBox: { x: 741, y: 1146, width: 37, height: 27 } },
+      { text: '6C', boundingBox: { x: 955, y: 1157, width: 39, height: 29 } },
+      { text: 'Total', boundingBox: { x: 701, y: 1204, width: 77, height: 34 } },
+      { text: '23C', boundingBox: { x: 934, y: 1218, width: 60, height: 32 } },
+      { text: 'Tax Exclus. Amount', boundingBox: { x: 455, y: 1251, width: 324, height: 49 } },
+      { text: '187.14', boundingBox: { x: 881, y: 1278, width: 112, height: 33 } },
+      { text: 'GETFund Levy 2.5%', boundingBox: { x: 432, y: 1305, width: 346, height: 60 } },
+      { text: '4.08', boundingBox: { x: 921, y: 1344, width: 74, height: 29 } },
+      { text: 'VAT 15o', boundingBox: { x: 626, y: 1582, width: 161, height: 44 } },
+      { text: '29.76', boundingBox: { x: 904, y: 1596, width: 102, height: 37 } },
+      { text: 'Tax lncluslvo Auount', boundingBox: { x: 241, y: 1700, width: 552, height: 78 } },
+      { text: '230.00', boundingBox: { x: 886, y: 1746, width: 123, height: 38 } },
+      { text: 'Annount Pakd', boundingBox: { x: 527, y: 1804, width: 267, height: 51 } },
+      { text: '230.00', boundingBox: { x: 884, y: 1899, width: 123, height: 35 } },
+      { text: 'all Pizza Man want Chop, Where from all chicken', boundingBox: { x: 180, y: 2100, width: 700, height: 40 } },
+    ],
+  };
+  dump.text = dump.lines.map((line) => line.text).join('\n');
+  const parsed = parseReceiptDocument(dump, { date: '2026-09-12', currency: 'GHS' });
+  assert.equal(parsed.merchant.value, 'Chickenman');
+  assert.equal(parsed.date.value, '2025-10-29');
+  assert.equal(parsed.amount.value, 230);
+  assert.equal(parsed.currency.value, 'GHS');
+  assert.equal(parsed.items.value.length, 2);
+  assert.ok(parsed.items.value.some((item) => /kersame/i.test(item.label) && item.total === 170));
+  assert.ok(parsed.items.value.some((item) => /ceres/i.test(item.label) && item.total === 60));
+  assert.ok(parsed.items.value.every((item) => !/ghs|total|exclus|levy|tax/i.test(item.label)));
+  const itemSum = parsed.items.value.reduce((sum, item) => sum + (item.total ?? 0), 0);
+  assert.equal(itemSum, 230);
+});
+
 test('benchmark helper scores a parsed receipt against expected fields', () => {
   const parsed = parseReceiptDocument(linesOf('Walmart\nTOTAL 10.00\nGallatin TN'), {
     date: '2026-09-12',

@@ -8,6 +8,7 @@ import {
 } from './localDataSource';
 import { normalizeReceipt } from '@/mocks/receipts';
 import { builtinCategories } from '@/services/categoryRepository';
+import { matchPurchaseQuery } from '@/services/search/query';
 
 /**
  * ReceiptRepository — the single persistence interface for receipts.
@@ -39,24 +40,28 @@ const toReceiptMedia = (record?: StoredMedia | null): ReceiptMedia | undefined =
         status: record.status ?? 'ready',
         addedAt: record.addedAt,
         source: record.source,
+        pageIndex: record.pageIndex,
+        width: record.width,
+        height: record.height,
       }
     : undefined;
 
+const sortMedia = (records: StoredMedia[]): StoredMedia[] =>
+  [...records].sort((a, b) => (a.pageIndex ?? 0) - (b.pageIndex ?? 0));
+
 const toStored = (receipt: Receipt): StoredReceipt => {
-  const { media, ...rest } = receipt;
-  return { ...rest, mediaId: media?.id };
+  const { media, sourceMedia, ...rest } = receipt;
+  return { ...rest, mediaId: media?.id ?? sourceMedia?.[0]?.id };
 };
 
-const hydrate = (
-  record: StoredReceipt,
-  mediaByReceiptId: Map<string, StoredMedia>
-): Receipt => ({
-  ...record,
-  media: toReceiptMedia(
-    mediaByReceiptId.get(record.id) ??
-      (record.mediaId ? mediaByReceiptId.get(record.mediaId) : undefined)
-  ),
-});
+const hydrate = (record: StoredReceipt, mediaRecords: StoredMedia[]): Receipt => {
+  const pages = sortMedia(mediaRecords).map((item) => toReceiptMedia(item)!);
+  return {
+    ...record,
+    media: pages[0],
+    sourceMedia: pages.length > 0 ? pages : undefined,
+  };
+};
 
 const migrateLegacyStore = async (): Promise<void> => {
   const flag = await AsyncStorage.getItem(MIGRATION_FLAG);
@@ -185,34 +190,21 @@ const buildReceipt = (input: NewReceipt, id: string): Receipt => {
   };
 };
 
-const matchesQuery = (receipt: Receipt, rawQuery: string): boolean => {
-  const query = rawQuery.trim().toLowerCase();
-  if (!query) return true;
-  const amountText = receipt.amount.toFixed(2);
-  return (
-    receipt.merchant.toLowerCase().includes(query) ||
-    receipt.category.toLowerCase().includes(query) ||
-    (receipt.notes ?? '').toLowerCase().includes(query) ||
-    (receipt.receiptNumber ?? '').toLowerCase().includes(query) ||
-    receipt.date.toLowerCase().includes(query) ||
-    amountText.includes(query) ||
-    String(receipt.amount).includes(query) ||
-    (receipt.tags ?? []).some((tag) => tag.toLowerCase().includes(query)) ||
-    (receipt.items ?? []).some((item) => item.label.toLowerCase().includes(query))
-  );
-};
+const matchesQuery = (receipt: Receipt, rawQuery: string): boolean =>
+  matchPurchaseQuery(receipt, { text: rawQuery.trim() || undefined });
 
 export const receiptRepository = {
   async getAll(): Promise<Receipt[]> {
     await ensureReceiptStoreReady();
     const records = await localDataSource.getAllReceiptRecords();
     const mediaRecords = await localDataSource.getAllMediaRecords();
-    const mediaByReceiptId = new Map<string, StoredMedia>();
+    const mediaByReceipt = new Map<string, StoredMedia[]>();
     for (const media of mediaRecords) {
-      mediaByReceiptId.set(media.receiptId, media);
-      mediaByReceiptId.set(media.id, media);
+      const list = mediaByReceipt.get(media.receiptId) ?? [];
+      list.push(media);
+      mediaByReceipt.set(media.receiptId, list);
     }
-    return records.map((r) => hydrate(r, mediaByReceiptId));
+    return records.map((r) => hydrate(r, mediaByReceipt.get(r.id) ?? []));
   },
 
   async get(id: string): Promise<Receipt | null> {
@@ -220,12 +212,7 @@ export const receiptRepository = {
     const record = await localDataSource.getReceiptRecord(id);
     if (!record) return null;
     const mediaRecords = await localDataSource.getMediaForReceipt(id);
-    const mediaByReceiptId = new Map<string, StoredMedia>();
-    for (const media of mediaRecords) {
-      mediaByReceiptId.set(media.receiptId, media);
-      mediaByReceiptId.set(media.id, media);
-    }
-    return hydrate(record, mediaByReceiptId);
+    return hydrate(record, mediaRecords);
   },
 
   async searchReceipts(query: string): Promise<Receipt[]> {
@@ -263,10 +250,15 @@ export const receiptRepository = {
     const receipt = buildReceipt(input, id);
     // Receipt row first — SQLite media/items have a foreign key to it.
     await localDataSource.saveReceiptRecord(toStored(receipt));
-    if (input.media) {
-      await localDataSource.saveMediaRecord({ ...input.media, receiptId: id });
+    const pages = input.sourceMedia?.length ? input.sourceMedia : input.media ? [input.media] : [];
+    for (const [index, media] of pages.entries()) {
+      await localDataSource.saveMediaRecord({
+        ...media,
+        receiptId: id,
+        pageIndex: media.pageIndex ?? index,
+      });
     }
-    return receipt;
+    return { ...receipt, media: pages[0], sourceMedia: pages.length > 0 ? pages : undefined };
   },
 
   async update(id: string, updates: Partial<Receipt>): Promise<Receipt | null> {
@@ -274,27 +266,41 @@ export const receiptRepository = {
     const record = await localDataSource.getReceiptRecord(id);
     if (!record) return null;
 
-    if (updates.media && updates.media.id !== record.mediaId) {
+    if (updates.sourceMedia) {
+      const existingMedia = await localDataSource.getMediaForReceipt(id);
+      const nextIds = new Set(updates.sourceMedia.map((item) => item.id));
+      for (const media of existingMedia) {
+        if (!nextIds.has(media.id)) {
+          await localDataSource.deleteMediaRecord(media.id);
+        }
+      }
+      for (const [index, media] of updates.sourceMedia.entries()) {
+        await localDataSource.saveMediaRecord({
+          ...media,
+          receiptId: id,
+          pageIndex: media.pageIndex ?? index,
+        });
+      }
+    } else if (updates.media && updates.media.id !== record.mediaId) {
       if (record.mediaId) {
         await localDataSource.deleteMediaRecord(record.mediaId);
       }
-      await localDataSource.saveMediaRecord({ ...updates.media, receiptId: id });
+      await localDataSource.saveMediaRecord({ ...updates.media, receiptId: id, pageIndex: 0 });
     }
 
-    const { media, ...rest } = updates;
+    const { media, sourceMedia, ...rest } = updates;
     const merged: StoredReceipt = {
       ...record,
       ...rest,
       ...(media ? { mediaId: media.id } : {}),
+      ...(sourceMedia?.[0] ? { mediaId: sourceMedia[0].id } : {}),
       id,
       updatedAt: new Date().toISOString(),
     };
     await localDataSource.saveReceiptRecord(merged);
 
-    const mediaRecord = merged.mediaId
-      ? await localDataSource.getMediaRecord(merged.mediaId)
-      : null;
-    return { ...merged, media: toReceiptMedia(mediaRecord) };
+    const mediaRecords = await localDataSource.getMediaForReceipt(id);
+    return hydrate(merged, mediaRecords);
   },
 
   async remove(id: string): Promise<void> {

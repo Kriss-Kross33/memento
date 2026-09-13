@@ -24,12 +24,16 @@ const pickTotal = (
   totalsMax: number,
   amounts = extractAmountCandidates(layout)
 ): { value: number; confidence: number; source: string; lineIndex?: number } => {
-  const region = amounts.filter(
-    (candidate) => candidate.lineIndex >= totalsMin && candidate.lineIndex <= totalsMax + 1
-  );
+  const inTotalsBand = (lineIndex: number) =>
+    lineIndex >= totalsMin && lineIndex <= Math.max(totalsMax + 2, totalsMin);
+  let region = amounts.filter((candidate) => inTotalsBand(candidate.lineIndex));
+  if (region.length === 0 || !region.some((candidate) => candidate.roleScores.total >= 0.55)) {
+    region = amounts.filter((candidate) => candidate.lineIndex >= totalsMin);
+  }
   if (region.length === 0) return { value: 0, confidence: 0.2, source: 'none' };
   const scored = region
     .filter((candidate) => !/%/.test(candidate.text) || candidate.roleScores.total >= 0.8)
+    .filter((candidate) => candidate.roleScores.tax < 0.72 || candidate.roleScores.total >= 0.7)
     .map((candidate) => ({
       ...candidate,
       score:

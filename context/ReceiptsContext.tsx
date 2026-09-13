@@ -35,7 +35,8 @@ const DEFAULT_SETTINGS: Settings = { defaultCurrency: DEFAULT_CURRENCY, hasOnboa
 
 export interface MediaSourceInput {
   uri: string;
-  source: 'camera' | 'library';
+  source: ReceiptMedia['source'];
+  pageIndex?: number;
 }
 
 export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
@@ -114,7 +115,9 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
         try {
           // Copy into app storage first so a scanner cache URI cannot expire
           // before the receipt row is written.
-          media = await importReceiptImage(mediaSource.uri, mediaSource.source);
+          media = await importReceiptImage(mediaSource.uri, mediaSource.source, {
+            pageIndex: mediaSource.pageIndex,
+          });
         } catch (error) {
           console.warn('[receipts] managed image import failed', error);
           media = undefined;
@@ -122,6 +125,9 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
       }
 
       const created = await receiptRepository.create({ ...receipt, media });
+      void import('@/services/reminders').then(({ syncReceiptReminders }) =>
+        syncReceiptReminders(created)
+      );
       await refresh();
       return created.id;
     },
@@ -130,22 +136,31 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
 
   const updateReceipt = useCallback(
     async (id: string, updates: Partial<Receipt>) => {
-      await receiptRepository.update(id, updates);
+      const updated = await receiptRepository.update(id, updates);
+      if (updated) {
+        void import('@/services/reminders').then(({ syncReceiptReminders }) =>
+          syncReceiptReminders(updated)
+        );
+      }
       await refresh();
     },
     [refresh]
   );
 
-  /** Replaces (or adds) a receipt's image with a fresh managed copy. */
+  /** Replaces (or adds) a receipt page with a fresh managed copy. */
   const attachMedia = useCallback(
     async (id: string, mediaSource: MediaSourceInput): Promise<void> => {
       const existing = await receiptRepository.get(id);
+      const pageIndex = mediaSource.pageIndex ?? 0;
+      const previous =
+        existing?.sourceMedia?.find((item) => (item.pageIndex ?? 0) === pageIndex) ?? existing?.media;
       try {
         await mediaRepository.replaceMedia(
           id,
-          existing?.media,
+          previous,
           mediaSource.uri,
-          mediaSource.source
+          mediaSource.source,
+          pageIndex
         );
         await refresh();
       } catch (error) {
@@ -156,14 +171,41 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
     [refresh]
   );
 
+  const addReceiptPage = useCallback(
+    async (id: string, mediaSource: MediaSourceInput): Promise<void> => {
+      const existing = await receiptRepository.get(id);
+      const nextIndex = existing?.sourceMedia?.length ?? (existing?.media ? 1 : 0);
+      await mediaRepository.saveMedia(id, mediaSource.uri, mediaSource.source, mediaSource.pageIndex ?? nextIndex);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const removeReceiptPage = useCallback(
+    async (id: string, mediaId: string): Promise<void> => {
+      const existing = await receiptRepository.get(id);
+      const page = existing?.sourceMedia?.find((item) => item.id === mediaId) ?? existing?.media;
+      if (page?.id === mediaId || page) {
+        await mediaRepository.deleteMedia(page);
+      }
+      await refresh();
+    },
+    [refresh]
+  );
+
   /** Deletes the receipt record together with its managed media files. */
   const deleteReceipt = useCallback(
     async (id: string) => {
       const receiptId = Array.isArray(id) ? id[0] : id;
       const existing = await receiptRepository.get(receiptId);
-      if (existing?.media) {
+      const pages = existing?.sourceMedia?.length
+        ? existing.sourceMedia
+        : existing?.media
+          ? [existing.media]
+          : [];
+      for (const media of pages) {
         // File removal only — the user's original photos are never touched.
-        await deleteReceiptMedia(existing.media);
+        await deleteReceiptMedia(media);
       }
       await receiptRepository.remove(receiptId);
       await refresh();
@@ -258,6 +300,8 @@ export const [ReceiptsProvider, useReceipts] = createContextHook(() => {
     updateReceipt,
     deleteReceipt,
     attachMedia,
+    addReceiptPage,
+    removeReceiptPage,
     clearAll,
     getReceipt,
     categories,
