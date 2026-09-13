@@ -1,12 +1,13 @@
 import type { LayoutDocument } from '@/utils/receipt/types';
 import { extractAmounts } from '@/utils/receipt/amounts';
-import { fuzzyHasTerm, HEADER_NOISE_TERMS } from '@/utils/receipt/vocabulary';
+import { fuzzyHasTerm, HEADER_NOISE_TERMS, isColumnHeaderLabel, isSloganLike } from '@/utils/receipt/vocabulary';
 
 const KNOWN_MERCHANTS: { name: string; category: string; pattern?: RegExp }[] = [
   { name: 'Electricity Company of Ghana', category: 'Utilities' },
   { name: 'Ghana Water Company', category: 'Utilities' },
   { name: 'KFC Chinatown Point', category: 'Food & Dining' },
   { name: 'Walmart', category: 'Groceries', pattern: /\bwalmart\b/i },
+  { name: 'Chickenman', category: 'Food & Dining', pattern: /\bchicken\s*man\b/i },
 ];
 
 const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -47,10 +48,20 @@ const isValidMerchantLine = (text: string): boolean => {
   if (/thank|feedback|survey|\.com|\.cm\b|mgr:|^\d{3}-\d{3}|pike|gallatin|\bst#/i.test(value)) {
     return false;
   }
-  if (/^(store|gst|co\.?\s*reg|check|receipt|invoice|cash)/i.test(value)) return false;
+  if (/^(store|gst|co\.?\s*reg|check|receipt|invoice|cash|original|tax)/i.test(value)) return false;
   if (/\b(pte\.?\s*ltd|llc|inc\.?)\b/i.test(value)) return false;
+  if (isColumnHeaderLabel(value) || isSloganLike(value)) return false;
   const amounts = extractAmounts(value);
   return amounts.length === 0;
+};
+
+const scoreMerchantLine = (line: { text: string; normalizedY: number }): number => {
+  const words = line.text.trim().split(/\s+/);
+  let score = 1.2 - line.normalizedY;
+  if (words.length <= 2) score += 0.4;
+  if (words.length >= 5) score -= 0.45;
+  if (/^[A-Z0-9][A-Z0-9 '&-]{1,32}$/.test(line.text.trim()) && words.length <= 3) score += 0.3;
+  return score;
 };
 
 export const pickMerchantCandidate = (layout: LayoutDocument) => {
@@ -77,8 +88,10 @@ export const pickMerchantCandidate = (layout: LayoutDocument) => {
   if (candidates.length === 0) {
     return { value: '', confidence: 0.2, categoryHint: undefined, source: 'none', line: undefined };
   }
-  const branded = candidates.find((line) => /^(kfc|walmart)\b/i.test(line.text.trim()));
-  const chosen = branded ?? candidates[0];
+  const branded = candidates.find((line) => /^(kfc|walmart|chickenman|chicken\s*man)\b/i.test(line.text.trim()));
+  const chosen =
+    branded ??
+    [...candidates].sort((a, b) => scoreMerchantLine(b) - scoreMerchantLine(a))[0];
 
   let matchedCategory: string | undefined;
   let confidence = branded ? 0.9 : 0.72;

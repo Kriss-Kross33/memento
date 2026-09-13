@@ -141,7 +141,51 @@ export default function FilterSheet({ visible, value, onApply, onClose }: Filter
                 accessibilityLabel="Merchant"
               />
 
-              <Text style={[styles.label, { marginTop: 20 }]}>Tag</Text>
+              <Text style={[styles.label, { marginTop: 20 }]}>Category</Text>
+              <TextInput
+                style={styles.amountInput}
+                value={draft.category}
+                onChangeText={(text) => setDraft((d) => ({ ...d, category: text }))}
+                placeholder="Shopping, Food…"
+                placeholderTextColor={Colors.textTertiary}
+                autoCorrect={false}
+                accessibilityLabel="Category"
+              />
+
+              <Text style={[styles.label, { marginTop: 20 }]}>Warranty</Text>
+              <View style={styles.chipRow}>
+                {([
+                  ['any', 'Any'],
+                  ['active', 'Active'],
+                  ['expired', 'Expired'],
+                ] as const).map(([key, label]) => (
+                  <Chip
+                    key={key}
+                    label={label}
+                    selected={draft.warrantyStatus === key}
+                    onPress={() => setDraft((d) => ({ ...d, warrantyStatus: key }))}
+                  />
+                ))}
+              </View>
+
+              <Text style={styles.label}>Return</Text>
+              <View style={styles.chipRow}>
+                {([
+                  ['any', 'Any'],
+                  ['eligible', 'Eligible'],
+                  ['approaching', 'Soon'],
+                  ['expired', 'Expired'],
+                ] as const).map(([key, label]) => (
+                  <Chip
+                    key={key}
+                    label={label}
+                    selected={draft.returnStatus === key}
+                    onPress={() => setDraft((d) => ({ ...d, returnStatus: key }))}
+                  />
+                ))}
+              </View>
+
+              <Text style={[styles.label, { marginTop: 4 }]}>Tag</Text>
               <TextInput
                 style={styles.amountInput}
                 value={draft.tag}

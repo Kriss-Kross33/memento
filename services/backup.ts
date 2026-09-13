@@ -45,22 +45,29 @@ export const createLocalBackup = async (): Promise<{ filename: string; uri: stri
 
   const images: BackupImage[] = [];
   for (const receipt of receipts) {
-    if (!receipt.media?.uri) continue;
-    const data = await readBase64(receipt.media.uri);
-    if (!data) continue;
-    images.push({
-      id: receipt.media.id,
-      receiptId: receipt.id,
-      source: receipt.media.source,
-      addedAt: receipt.media.addedAt,
-      data,
-    });
+    const pages = receipt.sourceMedia?.length
+      ? receipt.sourceMedia
+      : receipt.media
+        ? [receipt.media]
+        : [];
+    for (const media of pages) {
+      if (!media.uri) continue;
+      const data = await readBase64(media.uri);
+      if (!data) continue;
+      images.push({
+        id: media.id,
+        receiptId: receipt.id,
+        source: media.source,
+        addedAt: media.addedAt,
+        data,
+      });
+    }
   }
 
   const payload: BackupPayload = {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
-    receipts: receipts.map(({ media, ...rest }) => rest),
+    receipts: receipts.map(({ media, sourceMedia, ...rest }) => rest),
     categories: categories.filter((c) => !c.builtin),
     images,
   };
@@ -90,19 +97,22 @@ export const restoreLocalBackup = async (json: string): Promise<{ receipts: numb
 
   let photos = 0;
   for (const receipt of parsed.receipts) {
-    const image = (parsed.images ?? []).find((item) => item.receiptId === receipt.id);
-    let media = undefined;
-    if (image && Platform.OS !== 'web') {
-      const temp = `${FileSystem.cacheDirectory ?? ''}restore-${image.id}.jpg`;
-      await FileSystem.writeAsStringAsync(temp, image.data, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      media = await importReceiptImage(temp, image.source);
-      photos += 1;
+    const receiptImages = (parsed.images ?? []).filter((item) => item.receiptId === receipt.id);
+    const sourceMedia: ReceiptMedia[] = [];
+    if (Platform.OS !== 'web') {
+      for (const [index, image] of receiptImages.entries()) {
+        const temp = `${FileSystem.cacheDirectory ?? ''}restore-${image.id}.jpg`;
+        await FileSystem.writeAsStringAsync(temp, image.data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        sourceMedia.push(await importReceiptImage(temp, image.source, { pageIndex: index }));
+        photos += 1;
+      }
     }
     await receiptRepository.create({
       ...receipt,
-      media,
+      media: sourceMedia[0],
+      sourceMedia: sourceMedia.length > 0 ? sourceMedia : undefined,
     });
   }
 

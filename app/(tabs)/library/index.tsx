@@ -61,24 +61,9 @@ export default function LibraryScreen() {
    * amount, date, tags, and line-item names — all local.
    */
   const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const matching = receipts.filter((r) => {
-      if (activeCategory !== 'All' && r.category !== activeCategory) return false;
-      if (!query) return true;
-      const amountText = r.amount.toFixed(2);
-      return (
-        r.merchant.toLowerCase().includes(query) ||
-        r.category.toLowerCase().includes(query) ||
-        (r.notes ?? '').toLowerCase().includes(query) ||
-        (r.receiptNumber ?? '').toLowerCase().includes(query) ||
-        r.date.toLowerCase().includes(query) ||
-        amountText.includes(query) ||
-        String(r.amount).includes(query) ||
-        (r.tags ?? []).some((tag) => tag.toLowerCase().includes(query)) ||
-        (r.items ?? []).some((item) => item.label.toLowerCase().includes(query))
-      );
-    });
-    return filterAndSortReceipts(matching, filters);
+    const scoped =
+      activeCategory === 'All' ? receipts : receipts.filter((r) => r.category === activeCategory);
+    return filterAndSortReceipts(scoped, filters, search);
   }, [receipts, search, activeCategory, filters]);
 
   const sections = useMemo<Section[]>(() => {

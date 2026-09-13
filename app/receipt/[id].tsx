@@ -39,13 +39,15 @@ import DatePickerField, { toISODate } from '@/components/DatePickerField';
 import SectionHeader from '@/components/SectionHeader';
 import Button from '@/components/Button';
 import ReceiptImageViewer from '@/components/ReceiptImageViewer';
+import PageTray from '@/components/PageTray';
 import { shareCsv, sharePdf } from '@/utils/exportShare';
-import { readReceipt } from '@/services/ocr/pipeline';
-import { buildOcrMetadata } from '@/services/ocrMetadata';
+import { ingestReceiptPages, mapParsedToReceiptFields } from '@/services/ingest';
+import { originsAfterUserSave, shouldKeepUserField } from '@/services/ingest/origins';
 import { recordUserCorrections } from '@/services/intelligence/store';
 import { isLowFieldConfidence, isLowItemConfidence, reviewSummaryFromOcr } from '@/utils/receipt/confidence';
 import SmartReviewCard from '@/components/SmartReviewCard';
 import { useSubscription } from '@/context/SubscriptionContext';
+import { returnStatusCopy, warrantyStatusCopy } from '@/utils/protection';
 import type { ReviewField } from '@/utils/receipt/types';
 
 const looksLikeBrokenItems = (list: ReceiptItem[], total: number): boolean => {
@@ -94,7 +96,7 @@ export default function ReceiptDetailScreen() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const scanned = Array.isArray(params.scanned) ? params.scanned[0] : params.scanned;
   const router = useRouter();
-  const { getReceipt, updateReceipt, deleteReceipt, attachMedia } = useReceipts();
+  const { getReceipt, updateReceipt, deleteReceipt, attachMedia, addReceiptPage, removeReceiptPage } = useReceipts();
   const { hasPro, requestScan, consumeScan } = useSubscription();
   const Colors = useThemeColors();
   const styles = useMemo(() => createStyles(Colors), [Colors]);
@@ -122,7 +124,14 @@ export default function ReceiptDetailScreen() {
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [priceDraft, setPriceDraft] = useState('');
   const [focusField, setFocusField] = useState<ReviewField | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
   const rereadAttempted = useRef(false);
+  const sourcePages = receipt?.sourceMedia?.length
+    ? receipt.sourceMedia
+    : receipt?.media
+      ? [receipt.media]
+      : [];
+  const activePage = sourcePages[Math.min(pageIndex, Math.max(sourcePages.length - 1, 0))];
 
   const lineTotalOf = (item: ReceiptItem): number =>
     Math.round((item.total ?? item.quantity * item.unitPrice) * 100) / 100;
@@ -145,13 +154,13 @@ export default function ReceiptDetailScreen() {
   useEffect(() => {
     let cancelled = false;
     setMediaOk(true);
-    isMediaAvailable(receipt?.media).then((ok) => {
+    isMediaAvailable(activePage ?? receipt?.media).then((ok) => {
       if (!cancelled) setMediaOk(ok);
     });
     return () => {
       cancelled = true;
     };
-  }, [receipt?.media?.uri]);
+  }, [activePage?.uri, receipt?.media?.uri]);
 
   useEffect(() => {
     if (!receipt) return;
@@ -200,18 +209,22 @@ export default function ReceiptDetailScreen() {
     }
 
     const nextItems = items.filter((i) => i.label.trim() || i.unitPrice > 0);
-    updateReceipt(id, {
+    const nextValues = {
       merchant,
       amount: parseFloat(amount) || 0,
       category,
-      notes,
       date,
       currency,
+    };
+    updateReceipt(id, {
+      ...nextValues,
+      notes,
       items: nextItems,
       subtotal: nextItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0),
       tags,
       warrantyUntil,
       returnWindowDays,
+      fieldOrigins: originsAfterUserSave(receipt?.fieldOrigins, receipt ?? nextValues, nextValues),
     });
     void recordUserCorrections({
       scannedMerchant: receipt?.ocr?.suggestedMerchant,
@@ -253,7 +266,7 @@ export default function ReceiptDetailScreen() {
     );
   };
 
-  const importImage = useCallback(async () => {
+  const importImage = useCallback(async (mode: 'replace' | 'add' = 'replace') => {
     if (!id || isImporting) return;
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -263,7 +276,15 @@ export default function ReceiptDetailScreen() {
       });
       if (result.canceled || !result.assets[0]) return;
       setIsImporting(true);
-      await attachMedia(id, { uri: result.assets[0].uri, source: 'library' });
+      if (mode === 'add' && sourcePages.length > 0) {
+        await addReceiptPage(id, { uri: result.assets[0].uri, source: 'library' });
+      } else {
+        await attachMedia(id, {
+          uri: result.assets[0].uri,
+          source: 'library',
+          pageIndex: activePage?.pageIndex ?? pageIndex,
+        });
+      }
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -271,16 +292,16 @@ export default function ReceiptDetailScreen() {
       Alert.alert(
         "Receipt image couldn't be processed",
         'The photo could not be copied into Memento. Try again.',
-        [{ text: 'Try Again', onPress: () => void importImage() }, { text: 'Cancel', style: 'cancel' }]
+        [{ text: 'Try Again', onPress: () => void importImage(mode) }, { text: 'Cancel', style: 'cancel' }]
       );
     } finally {
       setIsImporting(false);
     }
-  }, [id, attachMedia, isImporting]);
+  }, [id, attachMedia, addReceiptPage, isImporting, sourcePages.length, activePage?.pageIndex, pageIndex]);
 
   const rereadFromPhoto = useCallback(async (countUsage = false) => {
-    const uri = receipt?.media?.uri;
-    if (!uri || isRereading) return;
+    const pages = receipt?.sourceMedia?.length ? receipt.sourceMedia : receipt?.media ? [receipt.media] : [];
+    if (pages.length === 0 || isRereading) return;
     if (countUsage) {
       const allowed = await requestScan();
       if (!allowed) {
@@ -290,10 +311,11 @@ export default function ReceiptDetailScreen() {
     }
     setIsRereading(true);
     try {
-      const mediaSource = receipt.media?.source;
-      const ocrSource = mediaSource === 'camera' || mediaSource === 'library' ? mediaSource : 'unknown';
-      const { document, parsed } = await readReceipt(uri, { date, currency }, ocrSource);
-      if (!document) {
+      const result = await ingestReceiptPages(
+        pages.map((page) => ({ uri: page.uri, source: page.source })),
+        { date, currency }
+      );
+      if (!result.pages.some((page) => page.document)) {
         Alert.alert(
           "Receipt couldn't be read",
           'The photo is still saved. Try again, or edit the items yourself.',
@@ -301,15 +323,22 @@ export default function ReceiptDetailScreen() {
         );
         return;
       }
-      const nextMerchant = parsed.merchant.value || merchant;
-      const nextDate = parsed.date.value || date;
-      const nextAmount = parsed.amount.value > 0 ? parsed.amount.value : parseFloat(amount) || 0;
-      const nextCategory = parsed.category.value || category;
+      const mapped = mapParsedToReceiptFields(result.parsed, { date, currency }, true);
+      const origins = receipt?.fieldOrigins;
+      const nextMerchant = shouldKeepUserField(origins, 'merchant') ? merchant : mapped.merchant || merchant;
+      const nextDate = shouldKeepUserField(origins, 'date') ? date : mapped.date || date;
+      const nextAmount = shouldKeepUserField(origins, 'amount')
+        ? parseFloat(amount) || 0
+        : mapped.amount > 0
+          ? mapped.amount
+          : parseFloat(amount) || 0;
+      const nextCategory = shouldKeepUserField(origins, 'category') ? category : mapped.category || category;
       const nextCurrency =
-        parsed.currency.confidence >= 0.8 ? parsed.currency.value || currency : currency;
-      const nextNotes = parsed.notes?.value && !notes.trim() ? parsed.notes.value : notes;
-      const nextItems = parsed.items.value;
-      const nextOcr = buildOcrMetadata(parsed, true);
+        shouldKeepUserField(origins, 'currency') || (result.parsed.currency.confidence < 0.8)
+          ? currency
+          : mapped.currency || currency;
+      const nextNotes = mapped.notes && !notes.trim() ? mapped.notes : notes;
+      const nextItems = mapped.items ?? [];
       setMerchant(nextMerchant);
       setDate(nextDate);
       setAmount(String(nextAmount));
@@ -326,8 +355,12 @@ export default function ReceiptDetailScreen() {
           category: nextCategory,
           notes: nextNotes,
           items: nextItems,
-          subtotal: nextItems.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0),
-          ocr: nextOcr,
+          subtotal: mapped.subtotal ?? nextItems.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0),
+          tax: mapped.tax,
+          discount: mapped.discount,
+          taxes: mapped.taxes,
+          discounts: mapped.discounts,
+          ocr: mapped.ocr,
         });
       }
       if (countUsage) await consumeScan();
@@ -345,8 +378,9 @@ export default function ReceiptDetailScreen() {
       setIsRereading(false);
     }
   }, [
-    receipt?.media?.uri,
-    receipt?.media?.source,
+    receipt?.sourceMedia,
+    receipt?.media,
+    receipt?.fieldOrigins,
     isRereading,
     date,
     currency,
@@ -407,8 +441,24 @@ export default function ReceiptDetailScreen() {
   }
 
   const subtotal = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
-  const hasMedia = Boolean(receipt.media);
+  const hasMedia = sourcePages.length > 0;
   const imageUnavailable = hasMedia && !mediaOk;
+  const suggestedMerchant =
+    receipt.ocr?.suggestedMerchant && receipt.ocr.suggestedMerchant !== merchant
+      ? receipt.ocr.suggestedMerchant
+      : undefined;
+  const suggestedCategory =
+    receipt.ocr?.suggestedCategory && receipt.ocr.suggestedCategory !== category
+      ? receipt.ocr.suggestedCategory
+      : undefined;
+  const returnCopy = returnStatusCopy({ ...receipt, date, returnWindowDays });
+  const warrantyCopy = warrantyStatusCopy({ ...receipt, date, warrantyUntil });
+  const showFinancials =
+    (receipt.subtotal != null && receipt.subtotal > 0) ||
+    (receipt.discount != null && receipt.discount > 0) ||
+    (receipt.tax != null && receipt.tax > 0) ||
+    (receipt.taxes?.length ?? 0) > 0 ||
+    (receipt.discounts?.length ?? 0) > 0;
   const isNewReceipt = receipt.merchant === '' && receipt.amount === 0;
   const fromScan = scanned === '1' || scanned === 'true';
   const detected = fromScan || receipt.ocr?.processingStatus === 'done';
@@ -516,13 +566,15 @@ export default function ReceiptDetailScreen() {
             testID="receipt-image"
           >
             <Image
-              source={{ uri: receipt.media?.uri }}
+              source={{ uri: activePage?.uri ?? receipt.media?.uri }}
               style={styles.imageHeroImage}
               contentFit="cover"
               transition={150}
               accessibilityLabel={`Receipt photo, ${merchant.trim() || 'unfiled'}`}
             />
-            <Text style={styles.imageHeroHint}>Tap to view</Text>
+            <Text style={styles.imageHeroHint}>
+              {sourcePages.length > 1 ? `Page ${pageIndex + 1} of ${sourcePages.length} · Tap to view` : 'Tap to view'}
+            </Text>
           </TouchableOpacity>
         ) : imageUnavailable ? (
           <View style={styles.imageUnavailable}>
@@ -554,6 +606,37 @@ export default function ReceiptDetailScreen() {
             <Text style={styles.addPhotoText}>Attach the receipt from your photo library. A private copy is saved here.</Text>
           </TouchableOpacity>
         )}
+
+        {hasMedia && mediaOk && sourcePages.length > 0 ? (
+          <View style={styles.pageTrayWrap}>
+            <PageTray
+              pages={sourcePages.map((page) => ({ id: page.id, uri: page.uri }))}
+              onSelect={(_, index) => setPageIndex(index)}
+              onAdd={() => void importImage('add')}
+              onRemove={(mediaId) => {
+                if (!id || sourcePages.length <= 1) return;
+                Alert.alert(
+                  'Remove this page?',
+                  'Only the copy stored in Memento is deleted. Photos in your library are not touched.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Remove',
+                      style: 'destructive',
+                      onPress: () => {
+                        void removeReceiptPage(id, mediaId);
+                        setPageIndex(0);
+                      },
+                    },
+                  ]
+                );
+              }}
+            />
+            <TouchableOpacity onPress={() => void importImage('replace')} style={styles.replacePageLink}>
+              <Text style={styles.replacePageText}>Replace this page</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {detected && fromScan ? (
           <SmartReviewCard
@@ -608,6 +691,11 @@ export default function ReceiptDetailScreen() {
             accessibilityLabel="Merchant name"
           />
           {merchantNeedsCheck || focusField === 'merchant' ? <Text style={styles.fieldHint}>Check this merchant</Text> : null}
+          {suggestedMerchant ? (
+            <TouchableOpacity onPress={() => setMerchant(suggestedMerchant)} accessibilityRole="button">
+              <Text style={styles.suggestionText}>Suggested merchant: {suggestedMerchant}</Text>
+            </TouchableOpacity>
+          ) : null}
           <Text style={styles.dateLine}>{formatFullDate(date)}</Text>
         </View>
 
@@ -618,6 +706,11 @@ export default function ReceiptDetailScreen() {
           <View style={styles.divider} />
           <CategoryField value={category} onChange={setCategory} testID="category-field" />
           {categoryNeedsCheck || focusField === 'category' ? <Text style={[styles.fieldHint, styles.fieldHintPad]}>Check this category</Text> : null}
+          {suggestedCategory ? (
+            <TouchableOpacity onPress={() => setCategory(suggestedCategory)} accessibilityRole="button">
+              <Text style={[styles.suggestionText, styles.fieldHintPad]}>Suggested: {suggestedCategory}</Text>
+            </TouchableOpacity>
+          ) : null}
           <View style={styles.divider} />
           <View style={styles.currencyRow}>
             <View style={styles.currencyIconSlot}>
@@ -707,6 +800,7 @@ export default function ReceiptDetailScreen() {
                 ))}
               </View>
               {warrantyDisplay ? <Text style={styles.warrantyMeta}>{warrantyDisplay}</Text> : null}
+              {warrantyCopy ? <Text style={styles.warrantyMeta}>{warrantyCopy}</Text> : null}
             </View>
           </View>
           <View style={styles.divider} />
@@ -740,6 +834,7 @@ export default function ReceiptDetailScreen() {
                 ))}
               </View>
               {returnDisplay ? <Text style={styles.warrantyMeta}>{returnDisplay}</Text> : null}
+              {returnCopy ? <Text style={styles.warrantyMeta}>{returnCopy}</Text> : null}
             </View>
           </View>
           <View style={styles.divider} />
@@ -761,6 +856,48 @@ export default function ReceiptDetailScreen() {
             </View>
           </View>
         </View>
+
+        {showFinancials ? (
+          <View style={styles.itemsSection}>
+            <SectionHeader title="Financials" />
+            <View style={styles.form}>
+              {receipt.subtotal != null ? (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Subtotal</Text>
+                  <Text style={styles.breakdownValue}>{formatMoney(receipt.subtotal, currency)}</Text>
+                </View>
+              ) : null}
+              {(receipt.discounts ?? []).map((discount, index) => (
+                <View key={`${discount.name}-${index}`} style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>{discount.name}</Text>
+                  <Text style={styles.breakdownValue}>-{formatMoney(discount.amount, currency)}</Text>
+                </View>
+              ))}
+              {receipt.discount && !(receipt.discounts?.length) ? (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Discount</Text>
+                  <Text style={styles.breakdownValue}>-{formatMoney(receipt.discount, currency)}</Text>
+                </View>
+              ) : null}
+              {(receipt.taxes ?? []).map((tax, index) => (
+                <View key={`${tax.name}-${index}`} style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>{tax.name}</Text>
+                  <Text style={styles.breakdownValue}>{formatMoney(tax.amount, currency)}</Text>
+                </View>
+              ))}
+              {receipt.tax && !(receipt.taxes?.length) ? (
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Tax</Text>
+                  <Text style={styles.breakdownValue}>{formatMoney(receipt.tax, currency)}</Text>
+                </View>
+              ) : null}
+              <View style={[styles.breakdownRow, styles.breakdownTotal]}>
+                <Text style={styles.breakdownLabel}>Total</Text>
+                <Text style={styles.breakdownTotalValue}>{formatMoney(parseFloat(amount) || 0, currency)}</Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         {/* Line items */}
         <View style={styles.itemsSection}>
@@ -924,7 +1061,13 @@ export default function ReceiptDetailScreen() {
         </TouchableOpacity>
       </ScrollView>
 
-      <ReceiptImageViewer receipt={receipt} visible={viewerVisible} onClose={() => setViewerVisible(false)} />
+      <ReceiptImageViewer
+        receipt={receipt}
+        visible={viewerVisible}
+        pageIndex={pageIndex}
+        onPageChange={setPageIndex}
+        onClose={() => setViewerVisible(false)}
+      />
     </>
   );
 }
@@ -984,6 +1127,25 @@ const createStyles = (Colors: ThemeColors) =>
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+  },
+  pageTrayWrap: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    gap: 8,
+  },
+  replacePageLink: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  replacePageText: {
+    fontSize: 13,
+    color: Colors.primary,
+    fontWeight: '500' as const,
+  },
+  suggestionText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 6,
   },
   imageUnavailable: {
     marginHorizontal: 16,

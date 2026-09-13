@@ -62,7 +62,7 @@ export const guessCategoryCandidate = (text: string, merchant: string, categoryH
   if (categoryHint) return { value: categoryHint, confidence: 0.9, source: 'merchant-profile' };
   const haystack = `${merchant} ${text}`;
   const hints: Array<{ value: string; pattern: RegExp }> = [
-    { value: 'Food & Dining', pattern: /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|food|dining|bar|grill|kitchen)\b/i },
+    { value: 'Food & Dining', pattern: /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|chicken|food|dining|bar|grill|kitchen)\b/i },
     { value: 'Groceries', pattern: /\b(walmart|grocery|supermarket|kroger|tesco|melcom)\b/i },
     { value: 'Transportation', pattern: /\b(uber|bolt|taxi|fuel|petrol|diesel|shell|goil|station)\b/i },
     { value: 'Travel', pattern: /\b(airline|airways|hotel|booking|flight)\b/i },

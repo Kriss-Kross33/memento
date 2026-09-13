@@ -30,7 +30,7 @@ export const parseDateFromText = (text: string): string | null => {
   }
 
   const named = text.match(
-    /\b(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(20\d{2}|\d{2})\b|\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(20\d{2}|\d{2})\b/
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(20\d{2}|\d{2})\b|\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2}|\d{2})\b/
   );
   if (named) {
     if (named[1] && named[2] && named[3]) {

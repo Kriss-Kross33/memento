@@ -7,6 +7,9 @@ import {
   DISCOUNT_TERMS,
   fuzzyHasTerm,
   isStrongTotalLabel,
+  isTaxExclusiveSubtotal,
+  isTaxInclusiveTotal,
+  isTaxInvoiceHeader,
   totalLabelRank,
 } from '@/utils/receipt/vocabulary';
 import { parseDateFromText } from '@/utils/receipt/date';
@@ -15,14 +18,19 @@ export const findAnchors = (layout: LayoutDocument): Anchor[] => {
   const anchors: Anchor[] = [];
   for (const line of layout.lines) {
     const text = line.text;
-    if (fuzzyHasTerm(text, SUBTOTAL_TERMS)) {
+    if (isTaxExclusiveSubtotal(text) || fuzzyHasTerm(text, SUBTOTAL_TERMS)) {
       anchors.push({ role: 'subtotal', lineIndex: line.index, confidence: 0.9, rank: 80 });
     }
     const rank = totalLabelRank(text);
-    if (rank > 0 && isStrongTotalLabel(text)) {
-      anchors.push({ role: 'total', lineIndex: line.index, confidence: Math.min(0.98, 0.82 + rank / 400), rank });
+    if ((rank > 0 && isStrongTotalLabel(text)) || isTaxInclusiveTotal(text)) {
+      anchors.push({
+        role: 'total',
+        lineIndex: line.index,
+        confidence: Math.min(0.98, 0.82 + rank / 400),
+        rank: isTaxInclusiveTotal(text) ? Math.max(rank, 96) : rank,
+      });
     }
-    if (fuzzyHasTerm(text, TAX_TERMS)) {
+    if (fuzzyHasTerm(text, TAX_TERMS) && !isTaxInvoiceHeader(text) && !isTaxInclusiveTotal(text) && !isTaxExclusiveSubtotal(text)) {
       anchors.push({ role: 'tax', lineIndex: line.index, confidence: 0.85, rank: 40 });
     }
     if (fuzzyHasTerm(text, DISCOUNT_TERMS)) {
@@ -51,20 +59,25 @@ export const deriveRegions = (layout: LayoutDocument, anchors: Anchor[]): Receip
   const payment = anchors.find((anchor) => anchor.role === 'payment');
   const change = anchors.find((anchor) => anchor.role === 'change');
 
-  const itemBoundary =
-    [subtotal?.lineIndex, firstPayable?.lineIndex, primaryTotal?.lineIndex].filter(
-      (value): value is number => typeof value === 'number'
-    )[0] ?? Math.floor(layout.lines.length * 0.72);
+  const regionCuts = [subtotal?.lineIndex, firstPayable?.lineIndex, primaryTotal?.lineIndex].filter(
+    (value): value is number => typeof value === 'number'
+  );
+  const itemBoundary = regionCuts.length > 0 ? Math.min(...regionCuts) : Math.floor(layout.lines.length * 0.72);
 
   const totalsMin = Math.min(
     subtotal?.lineIndex ?? primaryTotal?.lineIndex ?? itemBoundary,
     primaryTotal?.lineIndex ?? itemBoundary
   );
+  const lastCharge = Math.max(
+    0,
+    ...anchors.filter((anchor) => anchor.role === 'tax' || anchor.role === 'total').map((anchor) => anchor.lineIndex)
+  );
   const totalsMax = Math.max(
     primaryTotal?.lineIndex ?? itemBoundary,
     firstPayable?.lineIndex ?? itemBoundary,
     payment?.lineIndex ?? itemBoundary,
-    change?.lineIndex ?? itemBoundary
+    change?.lineIndex ?? itemBoundary,
+    lastCharge || itemBoundary
   );
 
   return {

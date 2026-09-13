@@ -69,6 +69,8 @@ export type ParsedReceipt = {
   explanations?: FieldExplanation[];
   warranty?: ExplicitWarranty;
   returnPolicy?: ExplicitReturnPolicy;
+  /** Medium-confidence local memory — shown as copy, not applied. */
+  memorySuggestions?: { merchant?: string; category?: string };
   validation: ReceiptValidation;
   overallConfidence: number;
   reviewState: ReviewState;

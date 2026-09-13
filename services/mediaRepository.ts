@@ -22,15 +22,26 @@ import {
 
 export const mediaRepository = {
   /** Copies an image into managed storage and records it against a receipt. */
-  async saveMedia(receiptId: string, sourceUri: string, source: ReceiptMedia['source']): Promise<ReceiptMedia> {
-    const media = await importReceiptImage(sourceUri, source);
+  async saveMedia(
+    receiptId: string,
+    sourceUri: string,
+    source: ReceiptMedia['source'],
+    pageIndex = 0
+  ): Promise<ReceiptMedia> {
+    const media = await importReceiptImage(sourceUri, source, { pageIndex });
     await localDataSource.saveMediaRecord({ ...media, receiptId });
     return media;
   },
 
-  /** Replaces a receipt's image: deletes the old record + managed file, saves the new one. */
-  async replaceMedia(receiptId: string, previous: ReceiptMedia | undefined, sourceUri: string, source: ReceiptMedia['source']): Promise<ReceiptMedia> {
-    const media = await importReceiptImage(sourceUri, source);
+  /** Replaces one managed page. Gallery originals are never touched. */
+  async replaceMedia(
+    receiptId: string,
+    previous: ReceiptMedia | undefined,
+    sourceUri: string,
+    source: ReceiptMedia['source'],
+    pageIndex = previous?.pageIndex ?? 0
+  ): Promise<ReceiptMedia> {
+    const media = await importReceiptImage(sourceUri, source, { pageIndex });
     await localDataSource.saveMediaRecord({ ...media, receiptId });
     if (previous) {
       await deleteReceiptMedia(previous);

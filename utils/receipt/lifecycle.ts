@@ -21,6 +21,19 @@ const durationDays = (text: string): { days: number; label: string } | null => {
   return null;
 };
 
+export const returnWindowDaysFromDuration = (duration?: string): number | undefined => {
+  if (!duration) return undefined;
+  return durationDays(duration)?.days;
+};
+
+export const reminderFireDate = (expiryIso: string, daysBefore: number, now = new Date()): string | null => {
+  const expiry = new Date(`${expiryIso}T09:00:00`);
+  if (Number.isNaN(expiry.getTime())) return null;
+  expiry.setDate(expiry.getDate() - daysBefore);
+  if (expiry.getTime() <= now.getTime()) return null;
+  return expiry.toISOString();
+};
+
 /** Only extract warranty when the document says so. Never invent a period. */
 export const extractExplicitWarranty = (text: string, purchaseDate: string): ExplicitWarranty | undefined => {
   if (!/\bwarrant(?:y|ies)\b/i.test(text)) return undefined;

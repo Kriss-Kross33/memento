@@ -12,20 +12,31 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { Camera, FileText, Zap, FlipHorizontal, ImagePlus, Scan } from 'lucide-react-native';
+import { Camera, FileText, Zap, FlipHorizontal, ImagePlus, Scan, FolderOpen } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useThemeColors } from '@/context/ThemeContext';
 import type { ThemeColors } from '@/constants/colors';
 import { useReceipts } from '@/context/ReceiptsContext';
 import { useSubscription } from '@/context/SubscriptionContext';
 import Button from '@/components/Button';
+import PageTray from '@/components/PageTray';
 import { toISODate } from '@/components/DatePickerField';
-import type { CaptureSource } from '@/services/ocr';
-import { readReceipt } from '@/services/ocr/pipeline';
-import { buildOcrMetadata } from '@/services/ocrMetadata';
-import { isDocumentScannerAvailable, scanReceiptDocument } from '@/services/documentScanner';
-import { importReceiptImage } from '@/services/receiptMedia';
-import { findDuplicateMatches } from '@/services/intelligence/duplicates';
+import { isDocumentScannerAvailable, scanReceiptDocuments } from '@/services/documentScanner';
+import {
+  finalizeScannedReceipt,
+  ingestReceiptPages,
+  mapParsedToReceiptFields,
+} from '@/services/ingest';
+import { rasterizePdfPages } from '@/services/ingest/pdf';
+import { isPdfInput } from '@/services/ingest/types';
+import type { ReceiptMedia } from '@/models/types';
+import { MAX_RECEIPT_PAGES } from '@/utils/receipt/limits';
+
+type SessionPage = {
+  id: string;
+  uri: string;
+  source: ReceiptMedia['source'];
+};
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -36,9 +47,11 @@ export default function ScanScreen() {
   const [flash, setFlash] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState('Reading receipt…');
   const [captureFailed, setCaptureFailed] = useState(false);
   const [scannerAvailable, setScannerAvailable] = useState(Platform.OS !== 'web');
   const [detectMode, setDetectMode] = useState(Platform.OS !== 'web');
+  const [sessionPages, setSessionPages] = useState<SessionPage[]>([]);
   const cameraRef = useRef<CameraView>(null);
   const captureAnim = useRef(new Animated.Value(1)).current;
   const themeColors = useThemeColors();
@@ -67,56 +80,7 @@ export default function ScanScreen() {
     if (Platform.OS !== 'web') Haptics.impactAsync(style);
   };
 
-  const emptyReceipt = () => ({
-    merchant: '',
-    date: toISODate(new Date()),
-    amount: 0,
-    currency: defaultCurrency,
-    category: 'Other',
-    notes: '',
-  });
-
-  const receiptFromImage = async (
-    uri: string,
-    source: CaptureSource = 'unknown',
-    force = false
-  ) => {
-    const blank = emptyReceipt();
-    const { document, parsed, skippedReason } = await readReceipt(
-      uri,
-      { date: blank.date, currency: blank.currency },
-      source,
-      { force }
-    );
-    if (skippedReason === 'retake-blur' && !force) {
-      return { skippedReason, fields: { ...blank, ocr: buildOcrMetadata(null, false) } };
-    }
-    if (!document) {
-      if (__DEV__) console.log('[ocr] parsed: skipped (no ocr result)');
-      return { fields: { ...blank, ocr: buildOcrMetadata(null, false) } };
-    }
-    return {
-      fields: {
-        ...blank,
-        merchant: parsed.merchant.value,
-        date: parsed.date.value,
-        amount: parsed.amount.value,
-        currency: parsed.currency.value,
-        category: parsed.category.value,
-        receiptNumber: parsed.receiptNumber?.value,
-        notes: parsed.notes?.value ?? '',
-        items: parsed.items.value,
-        subtotal: parsed.subtotal?.value,
-        tax: parsed.tax?.value,
-        discount: parsed.discount?.value,
-        warrantyUntil: parsed.warranty?.expiryDate,
-        returnWindowDays: parsed.returnPolicy?.duration?.match(/^(\d+) days$/)
-          ? Number(parsed.returnPolicy.duration.match(/^(\d+)/)?.[1])
-          : undefined,
-        ocr: buildOcrMetadata(parsed, true),
-      },
-    };
-  };
+  const fallback = () => ({ date: toISODate(new Date()), currency: defaultCurrency });
 
   const openReview = (id: string) => {
     router.push(`/receipt/${id}?scanned=1`, { withAnchor: true });
@@ -133,59 +97,62 @@ export default function ScanScreen() {
     return false;
   };
 
-  const saveScannedImage = async (
-    uri: string,
-    mediaSource: 'camera' | 'library',
-    ocrSource: CaptureSource = mediaSource,
-    force = false
-  ) => {
+  const addPages = (uris: string[], source: ReceiptMedia['source']) => {
+    setSessionPages((prev) => {
+      const room = MAX_RECEIPT_PAGES - prev.length;
+      const next = uris.slice(0, room).map((uri) => ({
+        id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        uri,
+        source,
+      }));
+      return [...prev, ...next];
+    });
+  };
+
+  const reviewSession = async (saveAnyway = false) => {
+    if (sessionPages.length === 0) return;
     if (!(await ensureScanAllowed())) return;
     setIsProcessing(true);
+    setProcessingMessage(
+      sessionPages.length > 1 ? `Processing page 1 of ${sessionPages.length}…` : 'Reading receipt…'
+    );
     try {
-      const media = await importReceiptImage(uri, mediaSource);
-      const result = await receiptFromImage(media.uri, ocrSource, force);
-      if (result.skippedReason === 'retake-blur') {
+      const result = await ingestReceiptPages(
+        sessionPages.map((page) => ({ uri: page.uri, source: page.source })),
+        fallback(),
+        (progress) => setProcessingMessage(progress.message)
+      );
+      const fields = mapParsedToReceiptFields(result.parsed, fallback(), result.pages.some((page) => page.document));
+      const incoming = {
+        ...fields,
+        media: result.pages[0]?.media,
+        sourceMedia: result.pages.map((page) => page.media),
+      };
+      const finalized = await finalizeScannedReceipt(incoming, receipts, { addReceipt, consumeScan }, { saveAnyway });
+      if (finalized.status === 'duplicate') {
         setIsProcessing(false);
         Alert.alert(
-          'Photo is too blurry',
-          'A steadier shot will read more accurately. You can still scan this photo if you want.',
+          'This looks like a receipt you already saved.',
+          'You can open the existing receipt or keep both.',
           [
-            { text: 'Retake', style: 'cancel' },
             {
-              text: 'Scan anyway',
-              onPress: () => void saveScannedImage(uri, mediaSource, ocrSource, true),
+              text: 'Review existing',
+              onPress: () => router.push(`/receipt/${finalized.match.receiptId}`),
             },
+            { text: 'Save anyway', onPress: () => void reviewSession(true) },
+            { text: 'Cancel', style: 'cancel' },
           ]
         );
         return;
       }
-      const id = await addReceipt({ ...result.fields, media });
-      await consumeScan();
-      const scannedFields = result.fields as typeof result.fields & {
-        receiptNumber?: string;
-        items?: Array<{ label: string }>;
-      };
-      const duplicate = findDuplicateMatches(
-        {
-          merchant: scannedFields.merchant,
-          date: scannedFields.date,
-          amount: scannedFields.amount,
-          receiptNumber: scannedFields.receiptNumber,
-          itemLabels: scannedFields.items?.map((item) => item.label),
-        },
-        receipts.map((entry) => ({
-          id: entry.id,
-          merchant: entry.merchant,
-          date: entry.date,
-          amount: entry.amount,
-          receiptNumber: entry.receiptNumber,
-          itemLabels: entry.items?.map((item) => item.label),
-        }))
-      )[0];
-      if (duplicate) {
-        Alert.alert('This looks like a receipt you already saved.', 'You can keep both, or delete one later.');
+      if (result.failedIndexes.length > 0) {
+        Alert.alert(
+          'Some pages could not be read',
+          `Page ${result.failedIndexes.map((index) => index + 1).join(', ')} failed. The other pages were kept. You can retry a page from the receipt.`
+        );
       }
-      openReview(id);
+      setSessionPages([]);
+      openReview(finalized.id);
     } catch (error) {
       console.warn('[scan] save failed', error);
       Alert.alert(
@@ -202,9 +169,9 @@ export default function ScanScreen() {
     if (isCapturing || isProcessing) return;
     if (!(await ensureScanAllowed())) return;
     haptic(Haptics.ImpactFeedbackStyle.Medium);
-    let uri: string | null = null;
+    let uris: string[] = [];
     try {
-      uri = await scanReceiptDocument();
+      uris = await scanReceiptDocuments();
     } catch (error) {
       console.warn('[scan] detect failed', error);
       Alert.alert(
@@ -212,22 +179,18 @@ export default function ScanScreen() {
         'Try Detect again, or take a photo with the camera shutter.',
         [
           { text: 'Try Detect again', style: 'cancel' },
-          {
-            text: 'Use camera',
-            onPress: () => setDetectMode(false),
-          },
+          { text: 'Use camera', onPress: () => setDetectMode(false) },
         ]
       );
       return;
     }
-    if (!uri) return;
-    await saveScannedImage(uri, 'camera', 'scanner');
+    if (uris.length === 0) return;
+    addPages(uris, 'camera');
   };
 
-  /** Captures a photo, saves a managed copy, then opens the review screen. */
   const handleCapture = async () => {
     if (isCapturing || isProcessing) return;
-    if (Platform.OS !== 'web' && !(await ensureScanAllowed())) return;
+    if (Platform.OS !== 'web' && sessionPages.length === 0 && !(await ensureScanAllowed())) return;
 
     setIsCapturing(true);
     animateCapture();
@@ -235,7 +198,14 @@ export default function ScanScreen() {
 
     try {
       if (Platform.OS === 'web') {
-        const id = await addReceipt(emptyReceipt());
+        const id = await addReceipt({
+          merchant: '',
+          date: toISODate(new Date()),
+          amount: 0,
+          currency: defaultCurrency,
+          category: 'Other',
+          notes: '',
+        });
         openReview(id);
         return;
       }
@@ -244,8 +214,7 @@ export default function ScanScreen() {
       if (!photo?.uri) {
         throw new Error('capture-failed');
       }
-
-      await saveScannedImage(photo.uri, 'camera');
+      addPages([photo.uri], 'camera');
     } catch {
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -265,21 +234,65 @@ export default function ScanScreen() {
     }
   };
 
-  /** Imports an existing photo from the user's library as a managed copy. */
   const handleLibraryImport = async () => {
     if (isCapturing || isProcessing) return;
-    if (!(await ensureScanAllowed())) return;
+    if (sessionPages.length === 0 && !(await ensureScanAllowed())) return;
     try {
+      const inSession = sessionPages.length > 0;
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 0.8,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: inSession,
+        selectionLimit: inSession ? Math.max(1, MAX_RECEIPT_PAGES - sessionPages.length) : 1,
       });
       if (result.canceled || !result.assets[0]) return;
       if (Platform.OS !== 'web') Haptics.selectionAsync();
-      await saveScannedImage(result.assets[0].uri, 'library');
+      addPages(
+        result.assets.map((asset) => asset.uri),
+        'library'
+      );
     } catch {
       setCaptureFailed(true);
+    }
+  };
+
+  const handleFileImport = async () => {
+    if (isCapturing || isProcessing) return;
+    if (sessionPages.length === 0 && !(await ensureScanAllowed())) return;
+    try {
+      const DocumentPicker = await import('expo-document-picker');
+      const inSession = sessionPages.length > 0;
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/heic', 'image/webp', 'application/pdf'],
+        copyToCacheDirectory: true,
+        multiple: inSession,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      for (const asset of result.assets) {
+        const input = { kind: 'file' as const, uri: asset.uri, mimeType: asset.mimeType, fileName: asset.name };
+        if (isPdfInput(input)) {
+          const raster = await rasterizePdfPages(asset.uri);
+          if (raster.error) {
+            Alert.alert(
+              raster.error === 'unsupported'
+                ? 'PDF reading needs a native build'
+                : raster.error === 'too-many-pages'
+                  ? 'This PDF has too many pages'
+                  : "This PDF couldn't be read",
+              raster.error === 'too-many-pages'
+                ? `Memento can read up to ${MAX_RECEIPT_PAGES} pages in one receipt.`
+                : 'Try an image, or rebuild the app to enable local PDF reading.'
+            );
+            continue;
+          }
+          addPages(raster.uris, 'pdf');
+        } else {
+          addPages([asset.uri], 'file');
+        }
+      }
+    } catch (error) {
+      console.warn('[scan] file import failed', error);
+      Alert.alert("File couldn't be imported", 'Try a JPEG, PNG, HEIC, WebP, or PDF.');
     }
   };
 
@@ -292,6 +305,45 @@ export default function ScanScreen() {
     if (Platform.OS !== 'web') Haptics.selectionAsync();
     setDetectMode(true);
   };
+
+  const movePage = (id: string, direction: -1 | 1) => {
+    setSessionPages((prev) => {
+      const index = prev.findIndex((page) => page.id === id);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const copy = [...prev];
+      const [item] = copy.splice(index, 1);
+      copy.splice(nextIndex, 0, item);
+      return copy;
+    });
+  };
+
+  const sessionTray = sessionPages.length > 0 ? (
+    <View style={styles.sessionPanel}>
+      <PageTray
+        pages={sessionPages}
+        onAdd={() =>
+          Alert.alert('Add another page', 'These pages will become one receipt.', [
+            { text: 'Camera', onPress: () => setDetectMode(false) },
+            { text: 'Photos', onPress: () => void handleLibraryImport() },
+            { text: 'Files', onPress: () => void handleFileImport() },
+            { text: 'Cancel', style: 'cancel' },
+          ])
+        }
+        onRemove={(id) => setSessionPages((prev) => prev.filter((page) => page.id !== id))}
+        onMove={movePage}
+        dark
+      />
+      <Button
+        title={isProcessing ? processingMessage : 'Review'}
+        onPress={() => void reviewSession()}
+        disabled={isProcessing}
+        loading={isProcessing}
+        style={styles.reviewButton}
+        testID="review-pages-button"
+      />
+    </View>
+  ) : null;
 
   if (Platform.OS !== 'web' && scannerAvailable && detectMode) {
     return (
@@ -306,13 +358,14 @@ export default function ScanScreen() {
             details on your device.
           </Text>
           <Button
-            title={isProcessing ? 'Reading receipt…' : 'Detect Receipt'}
+            title={isProcessing ? processingMessage : sessionPages.length > 0 ? 'Add page' : 'Detect Receipt'}
             onPress={() => void handleDetectReceipt()}
             disabled={isProcessing}
             loading={isProcessing}
             style={styles.detectButton}
             testID="detect-receipt-button"
           />
+          {sessionTray}
           <TouchableOpacity
             style={styles.manualEntryLink}
             onPress={() => {
@@ -331,6 +384,14 @@ export default function ScanScreen() {
             accessibilityLabel="Import a receipt from your photo gallery"
           >
             <Text style={styles.detectLink}>Or import from your gallery</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.manualEntryLink}
+            onPress={() => void handleFileImport()}
+            accessibilityRole="button"
+            accessibilityLabel="Import a receipt file or PDF"
+          >
+            <Text style={styles.detectLink}>Or import a file or PDF</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.manualEntryLink}
@@ -372,6 +433,7 @@ export default function ScanScreen() {
             style={styles.permissionButton}
             testID="enable-camera-button"
           />
+          {sessionTray}
           <TouchableOpacity
             style={styles.manualEntryLink}
             onPress={() => void handleLibraryImport()}
@@ -461,8 +523,12 @@ export default function ScanScreen() {
                 <View style={[styles.corner, styles.cornerBL]} />
                 <View style={[styles.corner, styles.cornerBR]} />
               </View>
-              <Text style={styles.guideText}>Position receipt within frame</Text>
+              <Text style={styles.guideText}>
+                {sessionPages.length > 0 ? 'Add another page, then review' : 'Position receipt within frame'}
+              </Text>
             </View>
+
+            {sessionTray}
 
             <View style={styles.bottomControls}>
               <TouchableOpacity style={styles.sideAction} onPress={handleManualEntry} accessibilityRole="button" accessibilityLabel="Manual entry">
@@ -498,6 +564,16 @@ export default function ScanScreen() {
               </TouchableOpacity>
             </View>
 
+            <TouchableOpacity
+              style={styles.filesLink}
+              onPress={() => void handleFileImport()}
+              accessibilityRole="button"
+              accessibilityLabel="Import a file or PDF"
+            >
+              <FolderOpen size={14} color="rgba(255,255,255,0.75)" />
+              <Text style={styles.filesLinkText}>Files or PDF</Text>
+            </TouchableOpacity>
+
             <View style={styles.hint}>
               <Text style={styles.hintText}>
                 Photos are saved privately on your device. Review details after capture.
@@ -508,7 +584,7 @@ export default function ScanScreen() {
           {isProcessing && (
             <View style={styles.processingOverlay} testID="processing-overlay">
               <ActivityIndicator color="#FFFFFF" />
-              <Text style={styles.processingText}>Reading receipt…</Text>
+              <Text style={styles.processingText}>{processingMessage}</Text>
             </View>
           )}
         </View>
@@ -585,6 +661,27 @@ const createStyles = (Colors: ThemeColors) =>
   detectLink: {
     fontSize: 15,
     color: '#5EEAD4',
+    fontWeight: '500' as const,
+  },
+  sessionPanel: {
+    width: '100%',
+    maxWidth: 360,
+    marginTop: 20,
+    gap: 12,
+  },
+  reviewButton: {
+    width: '100%',
+  },
+  filesLink: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingBottom: 8,
+  },
+  filesLinkText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.75)',
     fontWeight: '500' as const,
   },
   loadingContainer: {

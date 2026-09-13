@@ -29,8 +29,8 @@ export default function ProtectionScreen() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.intro}>
-        Return windows and warranties stored on this device. Reminders are shown here — notifications
-        can wait until a later version.
+        Return windows and warranties stored on this device. Turn on reminders in Settings if you
+        want a notice before a stored deadline.
       </Text>
       {items.map((item) => (
         <TouchableOpacity
