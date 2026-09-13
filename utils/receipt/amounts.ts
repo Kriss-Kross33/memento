@@ -8,6 +8,8 @@ import {
   fuzzyHasTerm,
   isNonPayableTotal,
   isStrongTotalLabel,
+  isTaxExclusiveSubtotal,
+  isTaxInclusiveTotal,
 } from '@/utils/receipt/vocabulary';
 
 const isPhoneLike = (raw: string): boolean => {
@@ -38,18 +40,28 @@ export const parseAmountToken = (raw: string): number | null => {
 const AMOUNT_PATTERN =
   /(?:GH₵|GHC|GHS|SGD|USD|GBP|EUR|[$£€₵])\s*\d[\d.,]*|\b\d{1,3}(?:,\d{3})+(?:\.\d{1,4})?\b|\b\d+,\d{2}\b|\b\d+\.\d{1,4}\b|[A-Za-z](\d+\.\d{1,4})\b/gi;
 
+/** OCR often reads a trailing 0 as C on Ghana thermal printers (17C → 170). */
+export const repairOcrAmountText = (line: string): string =>
+  line.replace(/\b(\d{1,4})[C]\b/g, (_, digits: string) => `${digits}0`);
+
 const isNegativeMatch = (line: string, index: number): boolean => {
   const before = line.slice(Math.max(0, index - 2), index);
   return /-\s*$/.test(before);
 };
 
 export const extractAmounts = (line: string): number[] => {
+  const repaired = repairOcrAmountText(line);
+  const standalone = repaired.trim().match(/^(?:GH₵|GHC|GHS|SGD|USD|GBP|EUR|[$£€₵])?\s*(\d{2,5}(?:[.,]\d{2})?)\s*$/i);
+  if (standalone) {
+    const value = parseAmountToken(standalone[1]);
+    return value != null ? [value] : [];
+  }
   const matches: string[] = [];
   const pattern = new RegExp(AMOUNT_PATTERN.source, 'gi');
   let match: RegExpExecArray | null;
-  while ((match = pattern.exec(line)) !== null) {
-    if (isNegativeMatch(line, match.index)) continue;
-    const after = line.slice(match.index + match[0].length, match.index + match[0].length + 3);
+  while ((match = pattern.exec(repaired)) !== null) {
+    if (isNegativeMatch(repaired, match.index)) continue;
+    const after = repaired.slice(match.index + match[0].length, match.index + match[0].length + 3);
     if (/^\s*%/.test(after)) continue;
     matches.push(match[1] ?? match[0]);
   }
@@ -87,14 +99,18 @@ export const scoreAmountRoles = (
     : line.normalizedY >= 0.62;
   const repeats = allValues.filter((entry) => Math.abs(entry - value) < 0.005).length;
   const neighborHasWords = /[a-z]{3}/i.test(context.replace(/[\d.,$£€₵]/g, ''));
-  const taxNear = nearestAnchorDistance(anchors, 'tax', line.index) <= 1 || fuzzyHasTerm(context, TAX_TERMS);
+  const taxHeader = isTaxInclusiveTotal(context) || isTaxExclusiveSubtotal(context);
+  const taxNear =
+    !taxHeader &&
+    (nearestAnchorDistance(anchors, 'tax', line.index) <= 1 || fuzzyHasTerm(context, TAX_TERMS));
   const paymentNear =
     nearestAnchorDistance(anchors, 'payment', line.index) <= 1 || fuzzyHasTerm(context, PAYMENT_TERMS);
   const changeNear = nearestAnchorDistance(anchors, 'change', line.index) <= 1 || fuzzyHasTerm(context, CHANGE_TERMS);
-  const subtotalLabel = fuzzyHasTerm(context, SUBTOTAL_TERMS);
+  const subtotalLabel = fuzzyHasTerm(context, SUBTOTAL_TERMS) || isTaxExclusiveSubtotal(context);
   const discountNear =
     nearestAnchorDistance(anchors, 'discount', line.index) <= 1 || fuzzyHasTerm(context, DISCOUNT_TERMS);
-  const strongTotal = isStrongTotalLabel(context) && !isNonPayableTotal(context);
+  const strongTotal =
+    (isStrongTotalLabel(context) || isTaxInclusiveTotal(context)) && !isNonPayableTotal(context);
 
   const labelScore = strongTotal ? 0.95 : 0.08;
   const regionScore = inTotals ? 0.22 : inItems ? -0.12 : 0.04;

@@ -29,6 +29,13 @@ import { createLocalBackup, restoreLocalBackup } from '@/services/backup';
 export default function SettingsScreen() {
   const router = useRouter();
   const { receipts, defaultCurrency, setDefaultCurrency, clearAll, reload } = useReceipts();
+  const [remindersOn, setRemindersOn] = React.useState(false);
+
+  React.useEffect(() => {
+    void import('@/services/reminders').then(({ loadReminderSettings }) =>
+      loadReminderSettings().then((settings) => setRemindersOn(settings.enabled))
+    );
+  }, []);
   const { hasPro, isLifetime, scanAccess, restore } = useSubscription();
   const { mode, setTheme } = useThemeMode();
   const Colors = useThemeColors();
@@ -277,6 +284,45 @@ export default function SettingsScreen() {
             title="Warranties & Returns"
             subtitle="Dates stored on this device"
             onPress={() => router.push('/protection')}
+          />
+          <View style={styles.divider} />
+          <SettingsRow
+            icon={<Shield size={20} color={Colors.textSecondary} />}
+            title="Deadline reminders"
+            subtitle="Return 3 days before, warranty 30 days before. Only for dates you set or that were printed on the receipt."
+            showArrow={false}
+            toggle={{
+              value: remindersOn,
+              onValueChange: (value) => {
+                void import('@/services/reminders').then(async ({
+                  saveReminderSettings,
+                  requestReminderPermission,
+                  syncReceiptReminders,
+                  cancelAllReceiptReminders,
+                }) => {
+                  if (value) {
+                    const allowed = await requestReminderPermission();
+                    if (!allowed) {
+                      Alert.alert(
+                        'Notifications are off',
+                        'Enable notifications to get a reminder before a stored return or warranty date.'
+                      );
+                      return;
+                    }
+                  }
+                  await saveReminderSettings({ enabled: value });
+                  setRemindersOn(value);
+                  if (!value) {
+                    await cancelAllReceiptReminders();
+                    return;
+                  }
+                  for (const receipt of receipts) {
+                    await syncReceiptReminders(receipt);
+                  }
+                });
+              },
+            }}
+            testID="reminder-toggle"
           />
           <View style={styles.divider} />
           <SettingsRow

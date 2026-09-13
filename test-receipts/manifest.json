@@ -28,6 +28,11 @@
       "region": "united-states",
       "venue": "supermarket",
       "conditions": ["thermal"]
+    },
+    "chickenman": {
+      "region": "ghana",
+      "venue": "restaurant",
+      "conditions": ["thermal"]
     }
   }
 }

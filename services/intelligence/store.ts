@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CategoryMemory, MerchantProfile } from '@/models/intelligence';
 import {
   CATEGORY_MEMORY_KEY,
@@ -12,8 +13,7 @@ import {
 
 const readJson = async <T>(key: string, fallback: T): Promise<T> => {
   try {
-    const storage = await import('@react-native-async-storage/async-storage');
-    const raw = await storage.default.getItem(key);
+    const raw = await AsyncStorage.getItem(key);
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
@@ -23,8 +23,7 @@ const readJson = async <T>(key: string, fallback: T): Promise<T> => {
 
 const writeJson = async (key: string, value: unknown): Promise<void> => {
   try {
-    const storage = await import('@react-native-async-storage/async-storage');
-    await storage.default.setItem(key, JSON.stringify(value));
+    await AsyncStorage.setItem(key, JSON.stringify(value));
   } catch {
     // Local memory is optional; scanning still works without it.
   }
@@ -66,6 +65,7 @@ export const applyLocalIntelligence = async <
     merchant: { value: string; confidence: number; source?: string };
     category: { value: string; confidence: number; source?: string };
     currency: { value: string; confidence: number; source?: string };
+    memorySuggestions?: { merchant?: string; category?: string };
   },
 >(
   parsed: T
@@ -73,41 +73,53 @@ export const applyLocalIntelligence = async <
   const [profiles, categories] = await Promise.all([loadMerchantProfiles(), loadCategoryMemory()]);
   const merchantHit = resolveStoredMerchant(parsed.merchant.value, profiles);
   let next = parsed;
-  if (merchantHit && merchantHit.confidence >= 0.8 && merchantHit.name !== parsed.merchant.value) {
-    next = {
-      ...next,
-      merchant: {
-        ...next.merchant,
-        value: merchantHit.name,
-        confidence: Math.max(next.merchant.confidence, merchantHit.confidence),
-        source: 'merchant-memory',
-      },
-    };
-    if (merchantHit.profile.defaultCurrency && next.currency.confidence < 0.8) {
+  const memorySuggestions: { merchant?: string; category?: string } = {};
+  if (merchantHit && merchantHit.name !== parsed.merchant.value) {
+    if (merchantHit.confidence >= 0.8) {
       next = {
         ...next,
-        currency: {
-          ...next.currency,
-          value: merchantHit.profile.defaultCurrency as T['currency']['value'],
-          confidence: Math.max(next.currency.confidence, 0.78),
+        merchant: {
+          ...next.merchant,
+          value: merchantHit.name,
+          confidence: Math.max(next.merchant.confidence, merchantHit.confidence),
           source: 'merchant-memory',
         },
       };
+      if (merchantHit.profile.defaultCurrency && next.currency.confidence < 0.8) {
+        next = {
+          ...next,
+          currency: {
+            ...next.currency,
+            value: merchantHit.profile.defaultCurrency as T['currency']['value'],
+            confidence: Math.max(next.currency.confidence, 0.78),
+            source: 'merchant-memory',
+          },
+        };
+      }
+    } else if (merchantHit.confidence >= 0.55) {
+      memorySuggestions.merchant = merchantHit.name;
     }
   }
   if (next.category.confidence < 0.85) {
     const categoryHit = suggestCategoryForMerchant(next.merchant.value, categories);
     if (categoryHit) {
-      next = {
-        ...next,
-        category: {
-          ...next.category,
-          value: categoryHit.category,
-          confidence: Math.max(next.category.confidence, categoryHit.confidence),
-          source: 'category-memory',
-        },
-      };
+      if (categoryHit.confidence >= 0.8) {
+        next = {
+          ...next,
+          category: {
+            ...next.category,
+            value: categoryHit.category,
+            confidence: Math.max(next.category.confidence, categoryHit.confidence),
+            source: 'category-memory',
+          },
+        };
+      } else if (categoryHit.confidence >= 0.55) {
+        memorySuggestions.category = categoryHit.category;
+      }
     }
+  }
+  if (memorySuggestions.merchant || memorySuggestions.category) {
+    next = { ...next, memorySuggestions };
   }
   return next;
 };

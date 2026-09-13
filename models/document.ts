@@ -132,18 +132,22 @@ export const receiptToPurchaseRecord = (receipt: Receipt): PurchaseRecord => ({
   currency: receipt.currency,
   subtotal: receipt.subtotal,
   discounts:
-    receipt.discount && receipt.discount > 0
-      ? [{ name: 'Discount', amount: receipt.discount, confidence: 0.7, source: 'stored', kind: 'discount' }]
-      : undefined,
+    receipt.discounts && receipt.discounts.length > 0
+      ? receipt.discounts
+      : receipt.discount && receipt.discount > 0
+        ? [{ name: 'Discount', amount: receipt.discount, confidence: 0.7, source: 'stored', kind: 'discount' }]
+        : undefined,
   taxes:
-    receipt.tax && receipt.tax > 0
-      ? [{ name: 'Tax', amount: receipt.tax, confidence: 0.7, source: 'stored' }]
-      : undefined,
+    receipt.taxes && receipt.taxes.length > 0
+      ? receipt.taxes
+      : receipt.tax && receipt.tax > 0
+        ? [{ name: 'Tax', amount: receipt.tax, confidence: 0.7, source: 'stored' }]
+        : undefined,
   total: receipt.amount,
   receiptNumber: receipt.receiptNumber,
   items: receipt.items ?? [],
   paymentMethod: receipt.paymentMethod,
-  sourceMedia: receipt.media ? [receipt.media] : undefined,
+  sourceMedia: receipt.sourceMedia?.length ? receipt.sourceMedia : receipt.media ? [receipt.media] : undefined,
   category: receipt.category,
   tags: receipt.tags,
   notes: receipt.notes,
@@ -155,5 +159,5 @@ export const receiptToPurchaseRecord = (receipt: Receipt): PurchaseRecord => ({
       ? { startDate: receipt.date, duration: `${receipt.returnWindowDays} days`, confidence: 1, source: 'user' }
       : undefined,
   confidence: receipt.ocr?.overallConfidence,
-  provenance: 'local-receipt',
+  provenance: receipt.fieldOrigins?.some((origin) => origin.source === 'user') ? 'user-corrected' : 'local-receipt',
 });

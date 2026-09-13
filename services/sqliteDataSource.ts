@@ -56,6 +56,38 @@ type MediaRow = {
   status: string;
   source: string | null;
   created_at: string;
+  page_index?: number | null;
+  width?: number | null;
+  height?: number | null;
+};
+
+type TaxRow = {
+  id: string;
+  receipt_id: string;
+  name: string;
+  rate: number | null;
+  amount: number;
+  confidence: number | null;
+  source: string | null;
+};
+
+type DiscountRow = {
+  id: string;
+  receipt_id: string;
+  name: string;
+  amount: number;
+  confidence: number | null;
+  source: string | null;
+  kind: string | null;
+};
+
+type OriginRow = {
+  id: string;
+  receipt_id: string;
+  field: string;
+  original_value: string;
+  source: string;
+  corrected_at: string | null;
 };
 
 type OcrRow = {
@@ -127,6 +159,41 @@ CREATE TABLE IF NOT EXISTS receipt_media (
   status TEXT NOT NULL DEFAULT 'ready',
   source TEXT,
   created_at TEXT NOT NULL,
+  page_index INTEGER NOT NULL DEFAULT 0,
+  width INTEGER,
+  height INTEGER,
+  FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS receipt_taxes (
+  id TEXT PRIMARY KEY NOT NULL,
+  receipt_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  rate REAL,
+  amount REAL NOT NULL,
+  confidence REAL,
+  source TEXT,
+  FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS receipt_discounts (
+  id TEXT PRIMARY KEY NOT NULL,
+  receipt_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  amount REAL NOT NULL,
+  confidence REAL,
+  source TEXT,
+  kind TEXT,
+  FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS receipt_field_origins (
+  id TEXT PRIMARY KEY NOT NULL,
+  receipt_id TEXT NOT NULL,
+  field TEXT NOT NULL,
+  original_value TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL,
+  corrected_at TEXT,
   FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
 );
 
@@ -193,8 +260,12 @@ CREATE TABLE IF NOT EXISTS categories (
 CREATE INDEX IF NOT EXISTS idx_receipts_date ON receipts(date);
 CREATE INDEX IF NOT EXISTS idx_receipts_category ON receipts(category);
 CREATE INDEX IF NOT EXISTS idx_receipts_merchant ON receipts(merchant);
+CREATE INDEX IF NOT EXISTS idx_receipts_receipt_number ON receipts(receipt_number);
+CREATE INDEX IF NOT EXISTS idx_receipts_warranty_until ON receipts(warranty_until);
+CREATE INDEX IF NOT EXISTS idx_receipts_return_window_days ON receipts(return_window_days);
 CREATE INDEX IF NOT EXISTS idx_items_receipt ON receipt_items(receipt_id);
 CREATE INDEX IF NOT EXISTS idx_media_receipt ON receipt_media(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_media_page ON receipt_media(receipt_id, page_index);
 `;
 
 const optStr = (value: unknown): string | undefined =>
@@ -233,6 +304,9 @@ const mediaFromRow = (row: MediaRow): StoredMedia => ({
     row.source === 'library' || row.source === 'file' || row.source === 'share' || row.source === 'pdf'
       ? row.source
       : 'camera',
+  pageIndex: optNum(row.page_index) ?? 0,
+  width: optNum(row.width),
+  height: optNum(row.height),
 });
 
 const ocrFromRow = (row: OcrRow): OCRMetadata => ({
@@ -339,6 +413,72 @@ export class SqliteDataSource implements LocalDataSource {
         // Column already exists on upgraded databases.
       }
     }
+    for (const column of ['page_index INTEGER', 'width INTEGER', 'height INTEGER']) {
+      try {
+        await db.execAsync(`ALTER TABLE receipt_media ADD COLUMN ${column}`);
+      } catch {
+        // Column already exists on upgraded databases.
+      }
+    }
+    for (const column of ['duration TEXT', 'provider TEXT', 'terms TEXT', 'source TEXT']) {
+      try {
+        await db.execAsync(`ALTER TABLE warranties ADD COLUMN ${column}`);
+      } catch {
+        // Column already exists on upgraded databases.
+      }
+    }
+    try {
+      await db.execAsync('ALTER TABLE warranties ADD COLUMN confidence REAL');
+    } catch {
+      // Column already exists on upgraded databases.
+    }
+    for (const column of ['start_date TEXT', 'deadline TEXT', 'policy_text TEXT', 'source TEXT']) {
+      try {
+        await db.execAsync(`ALTER TABLE return_policies ADD COLUMN ${column}`);
+      } catch {
+        // Column already exists on upgraded databases.
+      }
+    }
+    try {
+      await db.execAsync('ALTER TABLE return_policies ADD COLUMN confidence REAL');
+    } catch {
+      // Column already exists on upgraded databases.
+    }
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS receipt_taxes (
+        id TEXT PRIMARY KEY NOT NULL,
+        receipt_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        rate REAL,
+        amount REAL NOT NULL,
+        confidence REAL,
+        source TEXT,
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS receipt_discounts (
+        id TEXT PRIMARY KEY NOT NULL,
+        receipt_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        amount REAL NOT NULL,
+        confidence REAL,
+        source TEXT,
+        kind TEXT,
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS receipt_field_origins (
+        id TEXT PRIMARY KEY NOT NULL,
+        receipt_id TEXT NOT NULL,
+        field TEXT NOT NULL,
+        original_value TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL,
+        corrected_at TEXT,
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_receipts_receipt_number ON receipts(receipt_number);
+      CREATE INDEX IF NOT EXISTS idx_receipts_warranty_until ON receipts(warranty_until);
+      CREATE INDEX IF NOT EXISTS idx_receipts_return_window_days ON receipts(return_window_days);
+      CREATE INDEX IF NOT EXISTS idx_media_page ON receipt_media(receipt_id, page_index);
+    `);
     return new SqliteDataSource(db);
   }
 
@@ -360,7 +500,19 @@ export class SqliteDataSource implements LocalDataSource {
       ids
     );
     const mediaRows = await this.getAllAsync<MediaRow>(
-      `SELECT * FROM receipt_media WHERE receipt_id IN (${placeholders})`,
+      `SELECT * FROM receipt_media WHERE receipt_id IN (${placeholders}) ORDER BY page_index ASC, created_at ASC`,
+      ids
+    );
+    const taxRows = await this.getAllAsync<TaxRow>(
+      `SELECT * FROM receipt_taxes WHERE receipt_id IN (${placeholders})`,
+      ids
+    );
+    const discountRows = await this.getAllAsync<DiscountRow>(
+      `SELECT * FROM receipt_discounts WHERE receipt_id IN (${placeholders})`,
+      ids
+    );
+    const originRows = await this.getAllAsync<OriginRow>(
+      `SELECT * FROM receipt_field_origins WHERE receipt_id IN (${placeholders})`,
       ids
     );
 
@@ -377,16 +529,64 @@ export class SqliteDataSource implements LocalDataSource {
       tagsByReceipt.set(row.receipt_id, list);
     }
     const ocrByReceipt = new Map(ocrRows.map((row) => [row.receipt_id, ocrFromRow(row)]));
-    const mediaIdByReceipt = new Map(mediaRows.map((row) => [row.receipt_id, row.id]));
+    const mediaByReceipt = new Map<string, MediaRow[]>();
+    for (const row of mediaRows) {
+      const list = mediaByReceipt.get(row.receipt_id) ?? [];
+      list.push(row);
+      mediaByReceipt.set(row.receipt_id, list);
+    }
+    const taxesByReceipt = new Map<string, TaxRow[]>();
+    for (const row of taxRows) {
+      const list = taxesByReceipt.get(row.receipt_id) ?? [];
+      list.push(row);
+      taxesByReceipt.set(row.receipt_id, list);
+    }
+    const discountsByReceipt = new Map<string, DiscountRow[]>();
+    for (const row of discountRows) {
+      const list = discountsByReceipt.get(row.receipt_id) ?? [];
+      list.push(row);
+      discountsByReceipt.set(row.receipt_id, list);
+    }
+    const originsByReceipt = new Map<string, OriginRow[]>();
+    for (const row of originRows) {
+      const list = originsByReceipt.get(row.receipt_id) ?? [];
+      list.push(row);
+      originsByReceipt.set(row.receipt_id, list);
+    }
 
-    return rows.map((row) => ({
-      ...receiptFromRow(row, {
-        items: itemsByReceipt.get(row.id),
-        tags: tagsByReceipt.get(row.id),
-        ocr: ocrByReceipt.get(row.id),
-      }),
-      mediaId: mediaIdByReceipt.get(row.id),
-    }));
+    return rows.map((row) => {
+      const mediaList = mediaByReceipt.get(row.id) ?? [];
+      return {
+        ...receiptFromRow(row, {
+          items: itemsByReceipt.get(row.id),
+          tags: tagsByReceipt.get(row.id),
+          ocr: ocrByReceipt.get(row.id),
+        }),
+        mediaId: mediaList[0]?.id,
+        taxes: taxesByReceipt.get(row.id)?.map((tax) => ({
+          name: tax.name,
+          rate: optNum(tax.rate),
+          amount: tax.amount,
+          confidence: optNum(tax.confidence) ?? 0.7,
+          source: tax.source ?? 'stored',
+        })),
+        discounts: discountsByReceipt.get(row.id)?.map((discount) => ({
+          name: discount.name,
+          amount: discount.amount,
+          confidence: optNum(discount.confidence) ?? 0.7,
+          source: discount.source ?? 'stored',
+          kind: (['discount', 'coupon', 'promotion', 'loyalty', 'store_credit'].includes(discount.kind ?? '')
+            ? discount.kind
+            : 'discount') as NonNullable<StoredReceipt['discounts']>[number]['kind'],
+        })),
+        fieldOrigins: originsByReceipt.get(row.id)?.map((origin) => ({
+          field: origin.field,
+          originalValue: origin.original_value,
+          source: origin.source === 'user' ? ('user' as const) : ('ocr' as const),
+          correctedAt: optStr(origin.corrected_at),
+        })),
+      };
+    });
   }
 
   async getReceiptRecord(id: string): Promise<StoredReceipt | null> {
@@ -531,13 +731,65 @@ export class SqliteDataSource implements LocalDataSource {
         const expiry = new Date(record.date);
         expiry.setDate(expiry.getDate() + record.returnWindowDays);
         await this.runAsync(
-          `INSERT INTO return_policies (id, receipt_id, return_window_days, expiry_date)
-           VALUES (?, ?, ?, ?)`,
+          `INSERT INTO return_policies (id, receipt_id, return_window_days, expiry_date, start_date, deadline)
+           VALUES (?, ?, ?, ?, ?, ?)`,
           [
             `ret_${record.id}`,
             record.id,
             record.returnWindowDays,
             expiry.toISOString().split('T')[0],
+            record.date,
+            expiry.toISOString().split('T')[0],
+          ]
+        );
+      }
+
+      await this.runAsync('DELETE FROM receipt_taxes WHERE receipt_id = ?', [record.id]);
+      for (const [index, tax] of (record.taxes ?? []).entries()) {
+        await this.runAsync(
+          `INSERT INTO receipt_taxes (id, receipt_id, name, rate, amount, confidence, source)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `${record.id}_tax_${index}`,
+            record.id,
+            tax.name,
+            tax.rate ?? null,
+            tax.amount,
+            tax.confidence ?? null,
+            tax.source ?? null,
+          ]
+        );
+      }
+
+      await this.runAsync('DELETE FROM receipt_discounts WHERE receipt_id = ?', [record.id]);
+      for (const [index, discount] of (record.discounts ?? []).entries()) {
+        await this.runAsync(
+          `INSERT INTO receipt_discounts (id, receipt_id, name, amount, confidence, source, kind)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            `${record.id}_disc_${index}`,
+            record.id,
+            discount.name,
+            discount.amount,
+            discount.confidence ?? null,
+            discount.source ?? null,
+            discount.kind,
+          ]
+        );
+      }
+
+      await this.runAsync('DELETE FROM receipt_field_origins WHERE receipt_id = ?', [record.id]);
+      for (const origin of record.fieldOrigins ?? []) {
+        await this.runAsync(
+          `INSERT INTO receipt_field_origins (id, receipt_id, field, original_value, source, corrected_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            `${record.id}_origin_${origin.field}`,
+            record.id,
+            origin.field,
+            origin.originalValue,
+            origin.source,
+            origin.correctedAt ?? null,
           ]
         );
       }
@@ -551,6 +803,9 @@ export class SqliteDataSource implements LocalDataSource {
     await this.runAsync('DELETE FROM ocr_metadata WHERE receipt_id = ?', [receiptId]);
     await this.runAsync('DELETE FROM warranties WHERE receipt_id = ?', [receiptId]);
     await this.runAsync('DELETE FROM return_policies WHERE receipt_id = ?', [receiptId]);
+    await this.runAsync('DELETE FROM receipt_taxes WHERE receipt_id = ?', [receiptId]);
+    await this.runAsync('DELETE FROM receipt_discounts WHERE receipt_id = ?', [receiptId]);
+    await this.runAsync('DELETE FROM receipt_field_origins WHERE receipt_id = ?', [receiptId]);
     await this.runAsync('DELETE FROM receipt_media WHERE receipt_id = ?', [receiptId]);
     await this.runAsync('DELETE FROM receipts WHERE id = ?', [receiptId]);
   }
@@ -561,6 +816,9 @@ export class SqliteDataSource implements LocalDataSource {
     await this.runAsync('DELETE FROM ocr_metadata');
     await this.runAsync('DELETE FROM warranties');
     await this.runAsync('DELETE FROM return_policies');
+    await this.runAsync('DELETE FROM receipt_taxes');
+    await this.runAsync('DELETE FROM receipt_discounts');
+    await this.runAsync('DELETE FROM receipt_field_origins');
     await this.runAsync('DELETE FROM receipts');
   }
 
@@ -574,7 +832,7 @@ export class SqliteDataSource implements LocalDataSource {
 
   async getMediaForReceipt(receiptId: string): Promise<StoredMedia[]> {
     const rows = await this.getAllAsync<MediaRow>(
-      'SELECT * FROM receipt_media WHERE receipt_id = ?',
+      'SELECT * FROM receipt_media WHERE receipt_id = ? ORDER BY page_index ASC, created_at ASC',
       [receiptId]
     );
     return rows.map(mediaFromRow);
@@ -588,14 +846,17 @@ export class SqliteDataSource implements LocalDataSource {
   async saveMediaRecord(record: StoredMedia): Promise<void> {
     await this.runAsync(
       `INSERT INTO receipt_media (
-        id, receipt_id, type, local_path, thumbnail_path, status, source, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, receipt_id, type, local_path, thumbnail_path, status, source, created_at, page_index, width, height
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         receipt_id = excluded.receipt_id,
         local_path = excluded.local_path,
         thumbnail_path = excluded.thumbnail_path,
         status = excluded.status,
-        source = excluded.source`,
+        source = excluded.source,
+        page_index = excluded.page_index,
+        width = excluded.width,
+        height = excluded.height`,
       [
         record.id,
         record.receiptId,
@@ -605,6 +866,9 @@ export class SqliteDataSource implements LocalDataSource {
         record.status ?? 'ready',
         record.source,
         record.addedAt,
+        record.pageIndex ?? 0,
+        record.width ?? null,
+        record.height ?? null,
       ]
     );
   }

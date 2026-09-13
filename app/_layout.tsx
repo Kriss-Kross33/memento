@@ -16,6 +16,7 @@ import {
 } from "@/context/ThemeContext";
 import BrandedSplash from "@/components/BrandedSplash";
 import Onboarding from "./onboarding";
+import ShareIngestListener from "@/components/ShareIngestListener";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -150,6 +151,7 @@ export default function RootLayout() {
           <ThemeProvider>
             <SubscriptionProvider>
               <ReceiptsProvider>
+                <ShareIngestListener />
                 <RootLayoutNav />
               </ReceiptsProvider>
             </SubscriptionProvider>

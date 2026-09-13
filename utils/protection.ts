@@ -3,6 +3,8 @@ import { Receipt } from '@/models/types';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type ProtectionKind = 'return' | 'warranty';
+export type ReturnStatus = 'eligible' | 'approaching' | 'expired' | 'returned' | 'unknown';
+export type WarrantyStatus = 'active' | 'expired' | 'unknown';
 
 export interface ProtectionItem {
   receiptId: string;
@@ -69,3 +71,36 @@ export const protectionItemsFor = (receipts: Receipt[], now = new Date()): Prote
 
 export const urgentProtection = (receipts: Receipt[], withinDays = 7): ProtectionItem[] =>
   protectionItemsFor(receipts).filter((item) => item.daysLeft >= 0 && item.daysLeft <= withinDays);
+
+export const returnStatusFor = (receipt: Receipt, now = new Date()): ReturnStatus => {
+  if (receipt.returnWindowDays == null) return 'unknown';
+  const expiryDate = addDays(receipt.date, receipt.returnWindowDays);
+  const daysLeft = daysUntil(expiryDate, now);
+  if (daysLeft < 0) return 'expired';
+  if (daysLeft <= 3) return 'approaching';
+  return 'eligible';
+};
+
+export const warrantyStatusFor = (receipt: Receipt, now = new Date()): WarrantyStatus => {
+  if (!receipt.warrantyUntil) return 'unknown';
+  return daysUntil(receipt.warrantyUntil, now) < 0 ? 'expired' : 'active';
+};
+
+/** Quiet status copy. Only mentions a deadline when one was stored. */
+export const returnStatusCopy = (receipt: Receipt, now = new Date()): string | undefined => {
+  if (receipt.returnWindowDays == null) return undefined;
+  const expiryDate = addDays(receipt.date, receipt.returnWindowDays);
+  const daysLeft = daysUntil(expiryDate, now);
+  if (daysLeft < 0) return 'Return window expired.';
+  if (daysLeft === 0) return 'Return available today.';
+  if (daysLeft === 1) return 'Return available for 1 more day.';
+  return `Return available for ${daysLeft} more days.`;
+};
+
+export const warrantyStatusCopy = (receipt: Receipt, now = new Date()): string | undefined => {
+  if (!receipt.warrantyUntil) return undefined;
+  const daysLeft = daysUntil(receipt.warrantyUntil, now);
+  if (daysLeft < 0) return 'Warranty expired.';
+  if (daysLeft === 0) return 'Warranty ends today.';
+  return daysLeft === 1 ? 'Warranty active — 1 day left.' : `Warranty active — ${daysLeft} days left.`;
+};

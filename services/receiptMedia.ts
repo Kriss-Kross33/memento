@@ -51,7 +51,8 @@ const createThumbnail = async (sourceUri: string, id: string): Promise<string | 
  */
 export const importReceiptImage = async (
   sourceUri: string,
-  source: ReceiptMedia['source']
+  source: ReceiptMedia['source'],
+  options?: { pageIndex?: number }
 ): Promise<ReceiptMedia> => {
   const id = newMediaId();
   const media: ReceiptMedia = {
@@ -61,6 +62,7 @@ export const importReceiptImage = async (
     status: 'ready',
     addedAt: new Date().toISOString(),
     source,
+    pageIndex: options?.pageIndex ?? 0,
   };
 
   if (!isNative) {

@@ -7,6 +7,12 @@ export const OCR_WORD_FIXES: [RegExp, string][] = [
   [/\bpald\b/gi, 'Paid'],
   [/\bchargcd\b/gi, 'Charged'],
   [/\banount\b/gi, 'Amount'],
+  [/\banoumt\b/gi, 'Amount'],
+  [/\bauount\b/gi, 'Amount'],
+  [/\blncluslvo\b/gi, 'Inclusive'],
+  [/\bexclus\b/gi, 'Exclusive'],
+  [/\bpakd\b/gi, 'Paid'],
+  [/\blovy\b/gi, 'Levy'],
   [/\bbalunce\b/gi, 'Balance'],
   [/\bdale\b/gi, 'Date'],
   [/\bcompanny\b/gi, 'Company'],
@@ -43,8 +49,19 @@ const OCR_TOKEN_CORRECTIONS: Record<string, string> = {
   dct: 'oct',
 };
 
-export const TOTAL_TERMS = ['grand total', 'amount due', 'total due', 'net payable', 'amount paid', 'total purchase', 'total'];
-export const SUBTOTAL_TERMS = ['subtotal', 'sub total', 'sub-total'];
+export const TOTAL_TERMS = [
+  'grand total',
+  'amount due',
+  'total due',
+  'net payable',
+  'amount paid',
+  'total purchase',
+  'tax inclusive amount',
+  'inclusive amount',
+  'balance',
+  'total',
+];
+export const SUBTOTAL_TERMS = ['subtotal', 'sub total', 'sub-total', 'tax exclusive amount', 'exclusive amount'];
 export const TAX_TERMS = ['tax', 'vat', 'gst', 'nhil', 'levy', 'getfund', 'get fund', 'service charge'];
 export const DISCOUNT_TERMS = ['discount', 'promo', 'promotion', 'coupon', 'savings', 'loyalty', 'store credit', 'voucher'];
 export const PAYMENT_TERMS = ['payment', 'cash', 'card', 'visa', 'mastercard', 'momo', 'tendered'];
@@ -68,6 +85,24 @@ export const HEADER_NOISE_TERMS = [
   'feedback',
   'survey',
 ];
+
+export const COLUMN_HEADER_TERMS = ['item', 'items', 'qty', 'quantity', 'price', 'amount', 'ghs', 'ghc'];
+
+export const isColumnHeaderLabel = (text: string): boolean => {
+  const value = text.replace(/[().:]/g, '').trim();
+  if (!value) return false;
+  if (/^(item|items|qty|quantity|price|amount|total|ghs|ghc|usd|sgd|gbp|eur)$/i.test(value)) return true;
+  return /^(ghs|ghc)\)?$/i.test(value);
+};
+
+export const isSloganLike = (text: string): boolean => {
+  const words = text.trim().split(/\s+/);
+  return (
+    words.length >= 6 ||
+    /\?/.test(text) ||
+    /want chop|where from|all pizza|thank you for/i.test(text)
+  );
+};
 
 export type TermMatchMethod = 'exact' | 'correction' | 'fuzzy';
 
@@ -206,7 +241,16 @@ export const fuzzyHasTerm = (text: string, terms: string[], threshold?: number):
 
 /** Counts / tax / discount "totals" are not the payable receipt total. */
 export const isNonPayableTotal = (text: string): boolean =>
-  /\btotal\s*(items?|qty|quantity|sold|tax|vat|discount|savings?|tender)\b/i.test(text);
+  /\btotal\s*(items?|qty|quantity|sold|tax|vat|discount|savings?|tender)\b/i.test(text) ||
+  isTaxExclusiveSubtotal(text);
+
+export const isTaxInclusiveTotal = (text: string): boolean =>
+  /tax\s*inclus|inclus(?:ive|lvo)\s*a[muo]ount/i.test(text);
+
+export const isTaxExclusiveSubtotal = (text: string): boolean =>
+  /tax\s*exclus|exclus(?:ive|\.)\s*a[muo]ount/i.test(text);
+
+export const isTaxInvoiceHeader = (text: string): boolean => /\btax\s*invoice\b/i.test(text);
 
 /**
  * A payable TOTAL label. Fuzzy-only "total" is not enough — short OCR
@@ -224,6 +268,7 @@ export const totalLabelRank = (text: string): number => {
   if (!isStrongTotalLabel(text)) return 0;
   const value = normalize(text);
   if (value.includes('grand total')) return 100;
+  if (isTaxInclusiveTotal(text) || /(tax inclusive|inclusive amount)/.test(value)) return 96;
   if (/(amount due|total due|balance due)/.test(value)) return 92;
   if (/(net payable|amount payable)/.test(value)) return 88;
   if (/(total purchase|amount paid)/.test(value)) return 72;
