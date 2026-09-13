@@ -4,6 +4,7 @@ import { extractAmounts, parseAmountToken } from '@/utils/receipt/amounts';
 import { assignMaxWeight } from '@/utils/receipt/assignment';
 import {
   CHANGE_TERMS,
+  DISCOUNT_TERMS,
   HEADER_NOISE_TERMS,
   PAYMENT_TERMS,
   SERVICE_TERMS,
@@ -13,6 +14,7 @@ import {
   fuzzyHasTerm,
   isStrongTotalLabel,
 } from '@/utils/receipt/vocabulary';
+import { MAX_ITEM_LABEL_LENGTH, MAX_ITEM_QUANTITY, MAX_RECEIPT_ITEMS } from '@/utils/receipt/limits';
 
 type ItemCandidate = {
   lineIndex: number;
@@ -76,6 +78,7 @@ const isServiceOrNoise = (text: string): boolean =>
   fuzzyHasTerm(text, PAYMENT_TERMS) ||
   fuzzyHasTerm(text, CHANGE_TERMS) ||
   fuzzyHasTerm(text, HEADER_NOISE_TERMS) ||
+  fuzzyHasTerm(text, DISCOUNT_TERMS) ||
   /\b(pte\.?\s*ltd|llc|inc\.?|reg\.?\s*no)\b/i.test(text) ||
   /^free\b/i.test(text) ||
   QTY_NOTE.test(text) ||
@@ -147,9 +150,9 @@ export const parseItems = (
     if (isServiceOrNoise(line.text)) continue;
     if (line.normalizedY < 0.18) continue;
     const parsed = parseQtyAndLabel(line.text);
-    if (!parsed.label || parsed.label.length < 2 || parsed.label.length > 56) continue;
+    if (!parsed.label || parsed.label.length < 2 || parsed.label.length > MAX_ITEM_LABEL_LENGTH) continue;
     if (JUNK_LABEL.test(parsed.label)) continue;
-    if (parsed.quantity > 30 && parsed.unitAt == null) continue;
+    if (parsed.quantity > MAX_ITEM_QUANTITY && parsed.unitAt == null) continue;
     itemCandidates.push({
       lineIndex: line.index,
       label: parsed.label,
@@ -201,7 +204,7 @@ export const parseItems = (
     const match = note?.text.match(/(\d+)\s*AT\b/i);
     if (!match) continue;
     const quantity = Number(match[1]) || item.quantity;
-    if (quantity < 2 || quantity > 30) continue;
+    if (quantity < 2 || quantity > MAX_ITEM_QUANTITY) continue;
     item.quantity = quantity;
     item.unitPrice = Math.round(((item.total ?? item.unitPrice) / quantity) * 100) / 100;
   }
@@ -229,6 +232,7 @@ export const parseItems = (
 
   const subtotal = resolved.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0);
   const consistency = total > 0 && resolved.length > 0 ? Math.max(0, 1 - Math.abs(subtotal - total) / Math.max(total, 1)) : 0.4;
-  const confidence = resolved.length === 0 ? 0.35 : Math.min(0.99, (scoreSum / resolved.length) * 0.7 + consistency * 0.3);
-  return { items: resolved, confidence };
+  const capped = resolved.slice(0, MAX_RECEIPT_ITEMS);
+  const confidence = capped.length === 0 ? 0.35 : Math.min(0.99, (scoreSum / Math.max(capped.length, 1)) * 0.7 + consistency * 0.3);
+  return { items: capped, confidence };
 };

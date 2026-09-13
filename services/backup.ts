@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Receipt } from '@/models/types';
-import { Category } from '@/models/types';
+import { Category, Receipt, ReceiptMedia } from '@/models/types';
 import { localDataSource } from '@/services/localDataSource';
 import { receiptRepository } from '@/services/receiptRepository';
 import { importReceiptImage } from '@/services/receiptMedia';
@@ -11,7 +10,7 @@ const BACKUP_VERSION = 1;
 interface BackupImage {
   id: string;
   receiptId: string;
-  source: 'camera' | 'library';
+  source: ReceiptMedia['source'];
   addedAt: string;
   data: string;
 }

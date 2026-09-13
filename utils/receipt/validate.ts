@@ -1,22 +1,34 @@
 import type { ReceiptItem } from '@/models/types';
+import type { StructuredDiscount, StructuredTax } from '@/models/document';
 import type { AmountCandidate, ReceiptValidation } from '@/utils/receipt/types';
+import { AMOUNT_RELATIVE_TOLERANCE, AMOUNT_ROUNDING_TOLERANCE } from '@/utils/receipt/limits';
 
-const almost = (a: number, b: number, slack = 0.08): boolean => Math.abs(a - b) <= slack;
+const almost = (a: number, b: number, slack = AMOUNT_ROUNDING_TOLERANCE): boolean => Math.abs(a - b) <= slack;
+
+const toleranceFor = (total: number): number => Math.max(AMOUNT_ROUNDING_TOLERANCE, total * AMOUNT_RELATIVE_TOLERANCE);
 
 export const validateReceipt = ({
   total,
   items,
   amounts = [],
+  subtotal,
+  discount = 0,
+  taxes = [],
 }: {
   total: number;
   items: ReceiptItem[];
   amounts?: AmountCandidate[];
+  subtotal?: number;
+  discount?: number;
+  taxes?: StructuredTax[];
+  discounts?: StructuredDiscount[];
 }): ReceiptValidation => {
   const warnings: ReceiptValidation['warnings'] = [];
   let score = 1;
+  const slack = toleranceFor(total);
 
   const itemSum = items.reduce((sum, item) => sum + (item.total ?? item.quantity * item.unitPrice), 0);
-  if (total > 0 && items.length > 0 && itemSum > total + 0.15) {
+  if (total > 0 && items.length > 0 && itemSum > total + slack + discount) {
     warnings.push({
       code: 'items-exceed-total',
       message: 'Line items add up to more than the receipt total.',
@@ -27,7 +39,8 @@ export const validateReceipt = ({
   const subtotalCandidate = amounts
     .filter((candidate) => candidate.roleScores.subtotal >= 0.8)
     .sort((a, b) => b.roleScores.subtotal - a.roleScores.subtotal)[0];
-  if (subtotalCandidate && items.length > 0 && !almost(subtotalCandidate.value, itemSum, 0.2)) {
+  const printedSubtotal = subtotal ?? subtotalCandidate?.value;
+  if (printedSubtotal != null && items.length > 0 && !almost(printedSubtotal, itemSum, Math.max(0.2, slack))) {
     warnings.push({
       code: 'subtotal-mismatch',
       message: 'Printed subtotal does not match the sum of line items.',
@@ -73,9 +86,24 @@ export const validateReceipt = ({
     score -= 0.18;
   }
 
-  if (subtotalCandidate && taxCandidate && total > 0) {
-    const reconstructed = subtotalCandidate.value + taxCandidate.value;
-    if (!almost(reconstructed, total, Math.max(0.25, total * 0.03))) {
+  const taxSum = taxes.reduce((sum, tax) => sum + tax.amount, 0);
+  const reconstructedBase = printedSubtotal ?? (items.length > 0 ? itemSum : undefined);
+  const taxLooksInclusive =
+    reconstructedBase != null && total > 0 && almost(reconstructedBase, total, slack) && (taxSum > 0 || !!taxCandidate);
+  if (reconstructedBase != null && total > 0 && !taxLooksInclusive) {
+    const reconstructed = reconstructedBase - discount + (taxSum || taxCandidate?.value || 0);
+    if ((taxSum > 0 || discount > 0 || taxCandidate) && !almost(reconstructed, total, slack)) {
+      warnings.push({
+        code: 'totals-math',
+        message: 'Subtotal minus discounts plus taxes does not reasonably match the total.',
+      });
+      score -= 0.12;
+    }
+  }
+
+  if (printedSubtotal != null && taxCandidate && total > 0 && taxSum === 0 && !taxLooksInclusive) {
+    const reconstructed = printedSubtotal + taxCandidate.value - discount;
+    if (!almost(reconstructed, total, Math.max(0.25, slack))) {
       warnings.push({
         code: 'totals-inconsistent',
         message: 'Subtotal plus tax does not reasonably match the receipt total.',
@@ -101,6 +129,15 @@ export const validateReceipt = ({
       message: 'A line item looks like the receipt total was copied into the list.',
     });
     score -= 0.1;
+  }
+
+  const discountItem = items.some((item) => /discount|coupon|promo|loyalty/i.test(item.label));
+  if (discountItem) {
+    warnings.push({
+      code: 'discount-as-item',
+      message: 'A promotion or discount may have been saved as a purchased item.',
+    });
+    score -= 0.08;
   }
 
   score = Math.max(0, Math.min(1, score));

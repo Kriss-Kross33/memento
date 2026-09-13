@@ -10,7 +10,7 @@
     "ios:device": "expo run:ios --device",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "tsx --test tests/receipt-parser.test.ts tests/insights.test.ts tests/receipt-quality.test.ts tests/confidence-review.test.ts tests/scan-usage.test.ts tests/subscription-access.test.ts tests/ocr-confidence.test.ts tests/vision-ocr.test.ts",
+    "test": "tsx --test tests/receipt-parser.test.ts tests/insights.test.ts tests/receipt-quality.test.ts tests/confidence-review.test.ts tests/scan-usage.test.ts tests/subscription-access.test.ts tests/ocr-confidence.test.ts tests/vision-ocr.test.ts tests/document-intelligence.test.ts",
     "corpus:index": "node scripts/gen-corpus-index.mjs"
   },
   "dependencies": {

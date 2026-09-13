@@ -22,3 +22,6 @@ npm test
 ```
 
 Do not add a fixture without expected values unless it is an exploratory dump. Accuracy is measured only on receipts that have `expected/`.
+
+See `test/corpus/README.md` for the expanded document taxonomy (invoices,
+utility bills, long/multi-page receipts). New dumps still land here.

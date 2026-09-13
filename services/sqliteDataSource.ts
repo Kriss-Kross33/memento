@@ -70,6 +70,11 @@ type OcrRow = {
   items_confidence: number | null;
   overall_confidence: number | null;
   processed_at: string | null;
+  document_type?: string | null;
+  document_type_confidence?: number | null;
+  suggested_merchant?: string | null;
+  suggested_category?: string | null;
+  review_hints?: string | null;
 };
 
 type TagRow = { id: string; name: string };
@@ -137,6 +142,11 @@ CREATE TABLE IF NOT EXISTS ocr_metadata (
   items_confidence REAL,
   overall_confidence REAL,
   processed_at TEXT,
+  document_type TEXT,
+  document_type_confidence REAL,
+  suggested_merchant TEXT,
+  suggested_category TEXT,
+  review_hints TEXT,
   FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE
 );
 
@@ -193,6 +203,16 @@ const optStr = (value: unknown): string | undefined =>
 const optNum = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
+const parseReviewHints = (value: unknown): OCRMetadata['reviewHints'] => {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as OCRMetadata['reviewHints'];
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const itemFromRow = (row: ItemRow): ReceiptItem => ({
   id: row.id,
   label: row.name,
@@ -209,7 +229,10 @@ const mediaFromRow = (row: MediaRow): StoredMedia => ({
   type: 'image',
   status: (row.status as ReceiptMedia['status']) ?? 'ready',
   addedAt: row.created_at,
-  source: row.source === 'library' ? 'library' : 'camera',
+  source:
+    row.source === 'library' || row.source === 'file' || row.source === 'share' || row.source === 'pdf'
+      ? row.source
+      : 'camera',
 });
 
 const ocrFromRow = (row: OcrRow): OCRMetadata => ({
@@ -224,6 +247,11 @@ const ocrFromRow = (row: OcrRow): OCRMetadata => ({
   itemsConfidence: optNum(row.items_confidence),
   overallConfidence: optNum(row.overall_confidence),
   processedAt: optStr(row.processed_at),
+  documentType: optStr(row.document_type),
+  documentTypeConfidence: optNum(row.document_type_confidence),
+  suggestedMerchant: optStr(row.suggested_merchant),
+  suggestedCategory: optStr(row.suggested_category),
+  reviewHints: parseReviewHints(row.review_hints),
 });
 
 const receiptFromRow = (
@@ -297,9 +325,16 @@ export class SqliteDataSource implements LocalDataSource {
     const db = await SQLite.openDatabaseAsync('receiptsnap.db'); // historical filename — do not rename
     await db.execAsync(SCHEMA);
     await db.execAsync('PRAGMA foreign_keys = ON;');
-    for (const column of ['category_confidence', 'items_confidence', 'overall_confidence']) {
+    for (const column of ['category_confidence', 'items_confidence', 'overall_confidence', 'document_type_confidence']) {
       try {
         await db.execAsync(`ALTER TABLE ocr_metadata ADD COLUMN ${column} REAL`);
+      } catch {
+        // Column already exists on upgraded databases.
+      }
+    }
+    for (const column of ['document_type', 'suggested_merchant', 'suggested_category', 'review_hints']) {
+      try {
+        await db.execAsync(`ALTER TABLE ocr_metadata ADD COLUMN ${column} TEXT`);
       } catch {
         // Column already exists on upgraded databases.
       }
@@ -458,8 +493,9 @@ export class SqliteDataSource implements LocalDataSource {
           `INSERT INTO ocr_metadata (
             id, receipt_id, processing_status, merchant_confidence, date_confidence,
             total_confidence, currency_confidence, category_confidence, items_confidence,
-            overall_confidence, processed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            overall_confidence, processed_at, document_type, document_type_confidence,
+            suggested_merchant, suggested_category, review_hints
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             record.ocr.id || `ocr_${record.id}`,
             record.id,
@@ -472,6 +508,11 @@ export class SqliteDataSource implements LocalDataSource {
             record.ocr.itemsConfidence ?? null,
             record.ocr.overallConfidence ?? null,
             record.ocr.processedAt ?? null,
+            record.ocr.documentType ?? null,
+            record.ocr.documentTypeConfidence ?? null,
+            record.ocr.suggestedMerchant ?? null,
+            record.ocr.suggestedCategory ?? null,
+            record.ocr.reviewHints ? JSON.stringify(record.ocr.reviewHints) : null,
           ]
         );
       }
