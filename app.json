@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.memento.mobile",
+      "bundleIdentifier": "com.memento.impulse",
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Memento to detect and scan receipts.",
         "NSPhotoLibraryUsageDescription": "Allow Memento to import receipt photos.",
@@ -39,7 +39,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "app.memento.mobile",
+      "package": "com.memento.impulse",
       "intentFilters": [
         {
           "action": "VIEW",
