@@ -17,7 +17,6 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.memento.impulse",
       "infoPlist": {
-        "CFBundleIdentifier": "com.memento.impulse",
         "NSCameraUsageDescription": "Allow Memento to detect and scan receipts.",
         "NSPhotoLibraryUsageDescription": "Allow Memento to import receipt photos.",
         "LSSupportsOpeningDocumentsInPlace": false,
